@@ -1,51 +1,56 @@
-from langchain_community.graphs import Neo4jGraph
-from langchain_openai import ChatOpenAI
-from langchain.prompts.prompt import PromptTemplate
-from langchain.chains import GraphCypherQAChain
+from langchain_neo4j import GraphCypherQAChain
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import PromptTemplate
 import textwrap
-from LLM.prompt import retrieval_qa_chat_prompt
+
+
+# Prompt used to turn a natural-language question into a Cypher query.
+CYPHER_GENERATION_TEMPLATE = """Task: Generate a Cypher query to answer the question.
+Use only the node labels, relationship types and properties in the schema below.
+Do not use any label, relationship type or property that is not in the schema.
+Entity names use underscores instead of spaces (e.g. "Battle_of_Waterloo", not "Battle of Waterloo").
+Return only the Cypher query, with no explanation or markdown fences.
+
+Schema:
+{schema}
+
+Question: {question}
+Cypher query:"""
 
 
 def generate_cypher_query(
     question: str,
     graph,
     temperature: float = 0,
-    verbose: bool = True
+    verbose: bool = True,
 ) -> str:
     """
-    Generates a Cypher query from a natural language question using a Graph QA chain.
+    Answers a natural-language question by generating and running a Cypher
+    query against the graph, using Gemini as the LLM.
 
     Args:
-        question (str): The natural language question.
-        graph: The graph connection object.
-        retrieval_qa_chat_prompt (str): The prompt template used by the chain.
-        temperature (float, optional): The temperature setting for ChatOpenAI. Defaults to 0.
-        verbose (bool, optional): Whether to run the chain in verbose mode. Defaults to True.
-    
+        question: The natural language question.
+        graph: A langchain_neo4j.Neo4jGraph instance.
+        temperature: Sampling temperature for the LLM.
+        verbose: Whether the chain prints the generated Cypher.
+
     Returns:
-        str: A formatted Cypher query, wrapped to 60 characters per line.
-    
-    Note:
-        This chain has the potential to make dangerous requests, so you must set
-        'allow_dangerous_requests' to True. Use with caution.
+        The answer text, wrapped to 60 characters per line.
     """
-    # Create a prompt template for the chain.
     cypher_prompt = PromptTemplate(
         input_variables=["schema", "question"],
-        template=retrieval_qa_chat_prompt
+        template=CYPHER_GENERATION_TEMPLATE,
     )
 
-    # Create the QA chain using the provided graph and prompt.
+    llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=temperature)
+
     cypher_chain = GraphCypherQAChain.from_llm(
-        ChatOpenAI(temperature=temperature),
+        llm,
         graph=graph,
         verbose=verbose,
         cypher_prompt=cypher_prompt,
-        allow_dangerous_requests=True  # Acknowledge the risks here.
+        allow_dangerous_requests=True,  # Acknowledge the risks here.
     )
 
-    # Run the chain with the input question.
-    response = cypher_chain.run(question)
-    
-    # Format and return the Cypher query.
-    return textwrap.fill(response, 60)
+    response = cypher_chain.invoke({"query": question})
+    return textwrap.fill(response["result"], 60)

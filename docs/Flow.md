@@ -1,113 +1,135 @@
 # Flow
 
-Data and control flow for both phases. Diagrams are Mermaid — GitHub renders
-them inline.
+Two phases: **load data in** (`prep.ipynb`), then **ask questions** (`main.ipynb`).
 
 ---
 
-## 1. Ingestion flow (`prep.ipynb`)
+## 1. Ingestion — getting data into Neo4j
 
 ```mermaid
-flowchart TD
-    A[data/*.json<br/>section_name to section_text] --> B[split_data_from_file<br/>RecursiveCharacterTextSplitter<br/>2000 / 200]
-    B --> C[chunk dicts<br/>chunkId, text, source, chunkSeqId]
-
-    A --> D[create_nodes]
-    D --> D1[MERGE Person or Event<br/>name = filename id]
-    D --> D2[MERGE Section per JSON key<br/>type, parent_name]
-
-    C --> E[ingest_Chunks<br/>MERGE Chunk on chunkId]
-
-    D1 --> F[create_relationship x5]
-    D2 --> F
-    E --> F
-    F --> F1[Section-HAS_CHUNK-Chunk]
-    F --> F2[Person-RELATED_TO-Person]
-    F --> F3[Person-RELATED_TO-Event]
-    F --> F4[Person-HAS_SECTION-Section]
-    F --> F5[Event-HAS_SECTION-Section]
-
-    F --> G[create_vector_index<br/>Chunk / textEmbedding / 768 / cosine]
-    G --> H[embed_text]
-    H --> H1[MATCH Chunk WHERE textEmbedding IS NULL]
-    H1 --> H2[Gemini gemini-embedding-001<br/>RETRIEVAL_DOCUMENT, 768d]
-    H2 --> H3[L2 normalize]
-    H3 --> H4[db.create.setNodeVectorProperty]
-    H4 -. batch 32 + backoff on 429 .- H1
-
-    H4 --> Z[(Neo4j Aura<br/>db 3663f87a)]
-    D1 --> Z
-    D2 --> Z
-    E --> Z
-    F1 --> Z
+flowchart LR
+    A[data/*.json] --> B[split into chunks]
+    B --> C[write nodes<br/>Person / Event / Section / Chunk]
+    C --> D[connect nodes<br/>with relationships]
+    D --> E[embed each chunk<br/>with Gemini]
+    E --> F[(Neo4j)]
 ```
 
-Idempotent: nodes `MERGE` on keys; `embed_text` skips chunks that already have
-`textEmbedding`.
+### In plain words
 
----
+1. **Read the JSON.** Each file (`Napoleon.json`, etc.) is `{ "section name": "long text" }`.
+2. **Chunk it.** Long text is cut into ~2000-character pieces so it fits an embedding model.
+3. **Create nodes:**
+   - one `Person` or `Event` node per file,
+   - one `Section` node per JSON key,
+   - one `Chunk` node per text piece.
+4. **Create relationships** (`Section`→`Chunk`, `Person`→`Section`, `Person`→`Event`, …).
+5. **Embed chunks.** For every `Chunk`, send its text to Gemini, get back 768 numbers (a vector), store it on the node.
 
-## 2. Vector RAG query flow (`query_vector_rag`)
+### The code
 
-```mermaid
-sequenceDiagram
-    participant U as Caller (main.ipynb)
-    participant V as vectorRAG.py
-    participant G as Gemini
-    participant N as Neo4j (Chunk index)
-
-    U->>V: query_vector_rag(question, "Chunk", "Chunk", "text", "textEmbedding")
-    V->>G: embed question (RETRIEVAL_QUERY, 768d)
-    G-->>V: query vector
-    V->>N: db.index.vector.queryNodes(Chunk, k=4, vector)
-    N-->>V: top-4 chunk texts
-    V->>V: join texts into <context>
-    V->>G: prompt(context, question) via gemini-3.6-flash
-    G-->>V: answer text
-    V->>V: StrOutputParser + textwrap.fill(60)
-    V-->>U: answer
-```
-
-Prompt rule: answer **only** from `<context>`; otherwise "I don't know".
-
----
-
-## 3. Graph RAG query flow (`generate_cypher_query`)
-
-```mermaid
-sequenceDiagram
-    participant U as Caller (main.ipynb)
-    participant R as GraphRAG.py
-    participant N as Neo4j
-    participant G as Gemini (gemini-3.6-flash)
-
-    U->>R: generate_cypher_query(question, graph)
-    R->>N: MATCH Person/Event RETURN names
-    N-->>R: entity name catalog
-    R->>R: build PromptTemplate(schema, question, entity_names)
-    R->>G: "write a Cypher query"
-    G-->>R: Cypher (names constrained to the catalog)
-    R->>N: run Cypher
-    N-->>R: rows
-    R->>G: "summarize these rows for the question"
-    G-->>R: answer text
-    R->>R: textwrap.fill(60)
-    R-->>U: answer
-```
-
-`allow_dangerous_requests=True` is required because the LLM-authored Cypher runs
-directly against the database.
-
----
-
-## 4. How the two paths differ
-
-| | Vector RAG | Graph RAG |
+| Step | Function | File |
 |---|---|---|
-| Retrieves | chunk **text** by semantic similarity | **rows** via generated Cypher |
-| Knows about | anything written in the prose (e.g. Wellington, Blücher) | only modelled nodes (Talleyrand, Napoleon, Battle_of_Waterloo) |
-| Best question | "What reforms did Napoleon introduce?" | "How many Person nodes are there?" / "Who is related to Battle_of_Waterloo?" |
-| Failure mode | misses facts not in the top-k chunks | empty result if Cypher name/shape is wrong |
+| chunk | `split_data_from_file` | `KG/chunking.py` |
+| nodes | `create_nodes`, `ingest_Chunks` | `KG/kg.py` |
+| relationships | `create_relationship` | `KG/kg.py` |
+| index + embeddings | `create_vector_index`, `embed_text` | `KG/kg.py` |
+| run everything | `prep.ipynb` | — |
 
-The intended hybrid step: run both, feed vector chunks **and** Cypher rows into
-one final Gemini prompt.
+```python
+# prep.ipynb, simplified
+graph, gemini_api, _ = load_neo4j_graph()
+
+for name in ["Talleyrand", "Napoleon", "Battle_of_Waterloo"]:
+    chunks = split_data_from_file(f"data/{name}.json")   # 1 + 2
+    data   = json.load(open(f"data/{name}.json"))
+    label  = "Event" if name == "Battle_of_Waterloo" else "Person"
+    create_nodes(graph, data, label, name)               # 3
+    ingest_Chunks(graph, chunks, name, "Chunk")          # 3
+
+for q in relationship_queries:
+    create_relationship(graph, q)                        # 4
+
+create_vector_index(graph, "Chunk")                      # 5
+embed_text(graph, gemini_api, "Chunk", batch_size=32)    # 5
+```
+
+---
+
+## 2. Vector RAG — answer from chunk text
+
+```mermaid
+flowchart LR
+    Q[question] --> E[embed question]
+    E --> S[find 4 closest chunks]
+    S --> P[put chunks in prompt]
+    P --> L[Gemini writes answer]
+```
+
+### In plain words
+
+1. Turn the question into a vector (same Gemini model used for chunks).
+2. Ask Neo4j for the 4 chunks whose vectors are closest.
+3. Paste those 4 chunk texts into a prompt.
+4. Gemini answers using only that text.
+
+### The code
+
+```python
+# vectorRAG.py, simplified
+def query_vector_rag(question, ...):
+    store = Neo4jVector.from_existing_graph(embedding=Gemini(...), ...)   # 1 setup
+    chunks = store.as_retriever(search_kwargs={"k": 4}).invoke(question)  # 1 + 2
+    context = "\n\n".join(c.page_content for c in chunks)                 # 3
+
+    prompt = "Answer using only this context:\n{context}\n\nQ: {input}"
+    chain  = prompt | Gemini("gemini-3.6-flash") | StrOutputParser()
+    return chain.invoke({"context": context, "input": question})          # 4
+```
+
+---
+
+## 3. Graph RAG — answer with a generated query
+
+```mermaid
+flowchart LR
+    Q[question] --> C[Gemini writes Cypher]
+    C --> R[run Cypher on Neo4j]
+    R --> A[Gemini summarizes rows]
+```
+
+### In plain words
+
+1. Give Gemini the graph schema + the real node names, ask it to write a Cypher query.
+2. Run that query against Neo4j.
+3. Give the resulting rows back to Gemini to phrase as an answer.
+
+### The code
+
+```python
+# GraphRAG.py, simplified
+def generate_cypher_query(question, graph):
+    names  = _entity_name_catalog(graph)          # real Person/Event names
+    prompt = PromptTemplate(template=CYPHER_TEMPLATE, ...)  # includes schema + names
+
+    chain = GraphCypherQAChain.from_llm(
+        Gemini("gemini-3.6-flash"),
+        graph=graph,
+        cypher_prompt=prompt,
+        allow_dangerous_requests=True,             # LLM-written Cypher runs on the DB
+    )
+    return chain.invoke({"query": question})["result"]   # steps 1-3 happen inside
+```
+
+---
+
+## 4. Which one to use
+
+| Ask this way | Use |
+|---|---|
+| "What did Napoleon reform?" (facts in prose) | **Vector RAG** |
+| "How many Person nodes?" / "Who is linked to Waterloo?" (structure) | **Graph RAG** |
+
+Vector RAG sees anything written in the text (even people with no node, like
+Wellington). Graph RAG only knows the nodes you built, but its answers are exact.
+The planned next step is to run both and feed both results into one final prompt.

@@ -1,5 +1,5 @@
-@"
 .env
 __pycache__/
 *.pyc
-"@ | Out-File -Encoding utf8 .gitignore
+.venv/
+.ipynb_checkpoints/

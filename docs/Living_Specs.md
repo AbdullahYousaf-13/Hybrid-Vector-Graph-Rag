@@ -135,8 +135,9 @@ question
   -> ChatPromptTemplate (<user_input> tag marks it untrusted) | gemini-3.5-flash-lite | StrOutputParser
   -> answer (wrapped to 60 cols)
 
-daily_limiter.check_and_increment() runs before all of the above — raises if
-today's request count has already reached max_rpd (4)
+daily_limiter.check_and_increment() runs before all of the above — reads/
+writes .daily_quota.json (shared with GraphRAG.py), raises if today's count
+has already reached max_rpd (250)
 ```
 
 Answers strictly from retrieved chunk text ("say you don't know" otherwise).
@@ -153,8 +154,12 @@ question
   -> answer (wrapped to 60 cols)
 ```
 
-`daily_limiter.check_and_increment()` (its own `DailyQuotaTracker`, separate
-from `VectorRAG.py`'s) runs before all of the above.
+`daily_limiter.check_and_increment()` runs before all of the above, sharing
+the same `.daily_quota.json` counter as `VectorRAG.py`.
+
+⚠️ `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` are defined in
+this file but **not called anywhere** — dead code today, not active
+guardrails. See [Guardrails.md](Guardrails.md).
 
 ---
 
@@ -168,20 +173,18 @@ from `VectorRAG.py`'s) runs before all of the above.
 | 4   | No `requirements.txt` / lockfile                                                         | environment not reproducible              |
 | 5   | `id()` used in relationship Cypher (`prep.ipynb`)                                        | deprecation warnings; use `elementId()`   |
 | 6   | Secrets (Gemini key, Neo4j password) appeared in a chat transcript                       | rotate when convenient                    |
-| 7   | `GraphRAG.py` and `VectorRAG.py` each keep their own `DailyQuotaTracker` instance          | effective combined cap is 8 requests/day, not the 4 either file enforces alone |
-| 8   | `DailyQuotaTracker` is in-memory, keyed on `datetime.date.today()`                        | resets to 0 on every process/kernel restart — doesn't actually persist a daily count across runs |
-| 9   | No read-only enforcement on generated Cypher (`allow_dangerous_requests=True`)            | see Guardrails.md — a crafted question could in principle get the LLM to write `CREATE`/`DELETE`/`SET` |
+| 7   | `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` (`GraphRAG.py`) are defined but never called | dead code — read-only and row-limit protection do not actually run; confirmed live (executed Cypher in `main.ipynb` has no `LIMIT`) |
 
-`max_rpd=4` is intentional — it's a conservative test value against Gemini's
-real free-tier RPD of 7 for `gemini-3.5-flash-lite` (Tier 1 paid: 500). Not a
-gap. Auth, call timeouts, Gemini-side error masking, and audit logging were
+Auth, call timeouts, Gemini-side error masking, and audit logging were
 considered and deliberately skipped — single-user project, not deployed for
 others to call (see Guardrails.md).
 
 Resolved since the last pass: `vectorRAG.py` renamed to `VectorRAG.py` (import
 casing now matches on every OS); stress-test question replaced with real
 sample questions in `main.ipynb`; the old `SessionTokenBudget` (token-estimate
-cap) was replaced with a `DailyQuotaTracker` (real request-count cap).
+cap) was replaced with a `PersistentDailyQuotaTracker` — one shared counter
+(`.daily_quota.json`, gitignored) read and written by both `GraphRAG.py` and
+`VectorRAG.py`, `max_rpd=250`, survives a kernel/process restart.
 
 ---
 
@@ -194,6 +197,6 @@ cap) was replaced with a `DailyQuotaTracker` (real request-count cap).
 - [x] Rename `vectorRAG.py` → `VectorRAG.py` for portability.
 - [ ] Add 10 evaluation questions with expected answers.
 - [x] Replace estimated token-budget cap with a real request-count (RPD) guardrail.
-- [ ] Share one `DailyQuotaTracker` between `GraphRAG.py` and `VectorRAG.py` instead of two independent ones.
-- [ ] Persist the daily counter (file/DB) so it survives a kernel/process restart.
-- [ ] Add read-only enforcement (reject/strip write clauses) on LLM-generated Cypher — see [Guardrails.md](Guardrails.md).
+- [x] Share one quota tracker between `GraphRAG.py` and `VectorRAG.py` instead of two independent ones.
+- [x] Persist the daily counter (file) so it survives a kernel/process restart.
+- [ ] Actually wire `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` into `generate_cypher_query()` — they exist but are never called. See [Guardrails.md](Guardrails.md).

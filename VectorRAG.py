@@ -6,33 +6,49 @@ import textwrap
 from dotenv import load_dotenv
 import os
 import re
+import json
 import datetime
+from pathlib import Path
 
 load_dotenv()
 
-class DailyQuotaTracker:
-    """Tracks overall daily requests (RPD) to prevent hitting total daily free-tier limits."""
-    def __init__(self, max_rpd: int = 4):
+class PersistentDailyQuotaTracker:
+    """
+    Shared, persistent daily quota tracker backed by a local JSON file.
+    Survives Jupyter kernel restarts and shares state across modules.
+    """
+    def __init__(self, state_file=".daily_quota.json", max_rpd: int = 250):
+        self.state_file = Path(state_file)
         self.max_rpd = max_rpd
-        self.requests_today = 0
-        self.last_reset_date = datetime.date.today()
+
+    def _load_state(self) -> int:
+        today_str = datetime.date.today().isoformat()
+        if self.state_file.exists():
+            try:
+                data = json.loads(self.state_file.read_text())
+                if data.get("date") == today_str:
+                    return data.get("count", 0)
+            except Exception:
+                pass
+        return 0
+
+    def _save_state(self, count: int):
+        today_str = datetime.date.today().isoformat()
+        data = {"date": today_str, "count": count}
+        self.state_file.write_text(json.dumps(data))
 
     def check_and_increment(self):
-        today = datetime.date.today()
-        if today != self.last_reset_date:
-            self.requests_today = 0
-            self.last_reset_date = today
-
-        if self.requests_today >= self.max_rpd:
+        current_count = self._load_state()
+        if current_count >= self.max_rpd:
             raise RuntimeError(
-                f"Daily Quota Guardrail Triggered: You have reached your max daily limit "
-                f"of {self.max_rpd} requests for today. Resets tomorrow."
+                f"Daily Quota Guardrail Triggered: Max daily limit of {self.max_rpd} "
+                f"requests reached ({current_count}/{self.max_rpd}). Resets tomorrow."
             )
-        
-        self.requests_today += 1
-        print(f"[Daily Quota Tracker] Daily requests used: {self.requests_today}/{self.max_rpd}")
+        new_count = current_count + 1
+        self._save_state(new_count)
+        print(f"[Shared Daily Quota] Total requests used today: {new_count}/{self.max_rpd}")
 
-daily_limiter = DailyQuotaTracker(max_rpd=4)
+daily_limiter = PersistentDailyQuotaTracker(state_file=".daily_quota.json", max_rpd=250)
 
 
 def _validate_and_sanitize_question(question: str) -> str:
@@ -52,12 +68,12 @@ def query_vector_rag(
     vector_embedding_property: str,
 ) -> str:
     """
-    Retrieves relevant chunks from Neo4j vector index and asks Gemini to answer,
-    incorporating chunk limiting (`k=3`) and daily quota tracking.
+    Retrieves chunks from Neo4j vector index with chunk limiting (`k=3`),
+    context truncation, and shared persistent daily quota tracking.
     """
     sanitized_question = _validate_and_sanitize_question(question)
 
-    # Check daily budget allowance before execution
+    # 1. Track against shared persistent daily quota pool
     daily_limiter.check_and_increment()
 
     vector_store = Neo4jVector.from_existing_graph(
@@ -77,10 +93,10 @@ def query_vector_rag(
         embedding_node_property=vector_embedding_property,
     )
 
-    # 1. Cost Guardrail: Context Window & Chunk Limiting (Strictly capped at k=3 to prevent over-fetching)
+    # 2. Cost Guardrail: Context Window & Chunk Limiting (Strictly capped at k=3)
     docs = vector_store.as_retriever(search_kwargs={"k": 3}).invoke(sanitized_question)
     
-    # 2. Cost Guardrail: Context String Truncation (Max 3500 chars to protect input window)
+    # 3. Cost Guardrail: Context String Truncation (Max 3500 chars)
     context = "\n\n".join(d.page_content for d in docs)
     if len(context) > 3500:
         context = context[:3500] + "\n[Context truncated to save token costs]"

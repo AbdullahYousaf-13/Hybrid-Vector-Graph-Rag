@@ -67,7 +67,7 @@ flowchart LR
 | # | Step | Where | Tool used | Details |
 |---|------|-------|-----------|---------|
 | 0 | Validate & sanitize | `_validate_and_sanitize_question` (`VectorRAG.py`) | plain Python | **guardrail**: rejects empty input and anything over 300 chars, strips `\r\n\t` |
-| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`VectorRAG.py`) | plain Python `DailyQuotaTracker` | **guardrail**: raises `RuntimeError` once today's request count reaches `max_rpd` (4); counter resets when the date rolls over |
+| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`VectorRAG.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: raises `RuntimeError` once today's request count reaches `max_rpd` (250); shared with `GraphRAG.py` and survives a kernel restart |
 | 2 | Connect to the index | `Neo4jVector.from_existing_graph` (`VectorRAG.py`) | `langchain-neo4j` | points at index `Chunk`, text prop `text`, vector prop `textEmbedding` |
 | 3 | Embed the question | same call's `embedding=` | **Gemini `gemini-embedding-001`** via `langchain-google-genai` `GoogleGenerativeAIEmbeddings` | task `RETRIEVAL_QUERY`, **768 dims** (must match the stored vectors) |
 | 4 | Find nearest chunks | `.as_retriever(search_kwargs={"k": 3}).invoke(...)` | Neo4j `db.index.vector.queryNodes` | top **3** by cosine similarity — capped at 3 (was 4) as a cost guardrail |
@@ -114,10 +114,10 @@ flowchart LR
 | # | Step | Where | Tool used | Details |
 |---|------|-------|-----------|---------|
 | 0 | Validate & sanitize | `_validate_and_sanitize_question` (`GraphRAG.py`) | plain Python | **guardrail**: same rule as Vector RAG — reject empty/>300 chars, strip `\r\n\t` |
-| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`GraphRAG.py`) | plain Python `DailyQuotaTracker` | **guardrail**: separate instance from `VectorRAG.py`'s — raises once today's count reaches `max_rpd` (4) |
+| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`GraphRAG.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: shared counter with `VectorRAG.py` — raises once today's combined count reaches `max_rpd` (250); survives a kernel restart |
 | 2 | Collect real names | `_entity_name_catalog(graph)` (`GraphRAG.py`) | Cypher `MATCH (n) WHERE n:Person OR n:Event` | **guardrail**: allow-list so the LLM uses `Napoleon`, `Battle_of_Waterloo`, … and doesn't invent slugs |
 | 3 | Build the prompt | `PromptTemplate` (`langchain-core`) | `CYPHER_GENERATION_TEMPLATE` | fills in `{schema}` (from Neo4j), `{entity_names}`, few-shot examples, and wraps `{question}` in `<user_question>` tags marked untrusted (**prompt-injection guardrail**) |
-| 4 | Write + run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`) | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI` | chain internally: LLM writes Cypher → runs it on `graph` → LLM turns rows into a sentence. `allow_dangerous_requests=True` because LLM-written Cypher runs on the DB — **no read-only check yet**, see `docs/Guardrails.md` |
+| 4 | Write + run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`) | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI` | chain internally: LLM writes Cypher → runs it on `graph` → LLM turns rows into a sentence. `allow_dangerous_requests=True`, and no check runs before execution — `_enforce_readonly_cypher()`/`_ensure_cypher_limit()` exist in this file but are **never called** (dead code), see `docs/Guardrails.md` |
 | 5 | Format | `textwrap.fill(response["result"], 60)` | plain Python | wrap to 60 columns |
 
 ### The code

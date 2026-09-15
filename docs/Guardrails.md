@@ -17,17 +17,28 @@ Last updated: 2026-09-15
 |---|---|---|
 | Retrieval cap `k=3` | `VectorRAG.py` | fewer chunks fetched per question = smaller prompt |
 | Context truncation (3500 chars) | `VectorRAG.py` | caps how much chunk text gets sent to the LLM |
-| Daily quota tracker (`max_rpd=4`, resets at midnight) | `GraphRAG.py`, `VectorRAG.py` | blocks further calls once today's request count hits the cap. `4` is a deliberately conservative test value — Gemini free tier for `gemini-3.5-flash-lite` is actually RPM 4 / TPM 6.69K / **RPD 7** (Tier 1 paid: 15 / 250K / 500) |
+| Shared persistent daily quota (`max_rpd=250`, backed by `.daily_quota.json`) | `GraphRAG.py`, `VectorRAG.py` | one counter, read/written by both files, keyed by date — survives a kernel restart and can't be doubled by alternating between the two RAG paths. `.daily_quota.json` is gitignored (it's runtime state, not source) |
 | Cheaper model `gemini-3.5-flash-lite` | `GraphRAG.py`, `VectorRAG.py` | lower cost/latency per call than the previous flash model |
+
+## ⚠️ Defined but not enforced (looks added, isn't)
+
+`GraphRAG.py` defines `_enforce_readonly_cypher()` and `_ensure_cypher_limit()`
+— they read like the read-only and row-limit guardrails below, but **neither
+function is ever called** in `generate_cypher_query()`. The generated Cypher
+runs unmodified and unchecked; confirmed live in `main.ipynb`, where the
+executed query has no `LIMIT` despite `_ensure_cypher_limit` existing to add
+one. Treat both as **not implemented** until they're actually wired into
+`generate_cypher_query()` (call `_enforce_readonly_cypher` and
+`_ensure_cypher_limit` on `response`'s generated query before/around
+execution — LangChain's `GraphCypherQAChain` doesn't expose a clean pre-exec
+hook for this today, which is likely why they were left unwired).
 
 ## Not added yet
 
 | Guardrail | Why it'd help |
 |---|---|
-| Read-only enforcement on generated Cypher | nothing stops the LLM from writing `CREATE`/`DELETE`/`SET` — `allow_dangerous_requests=True` has no check |
-| Shared daily quota | `GraphRAG.py` and `VectorRAG.py` each track their own `max_rpd=4` — a session can spend 8/day by alternating, not 4 |
-| Persistent quota (survives restart) | the counter is in-memory; restarting the kernel resets today's count back to 0 |
-| Row limit (`LIMIT`) on generated Cypher | an unbounded query like `MATCH (n) RETURN n` isn't capped — harmless at 166 nodes today, matters once the graph grows |
+| Read-only enforcement on generated Cypher (wire up `_enforce_readonly_cypher`) | nothing stops the LLM from writing `CREATE`/`DELETE`/`SET` — `allow_dangerous_requests=True` has no check, and the function meant to check it isn't called |
+| Row limit on generated Cypher (wire up `_ensure_cypher_limit`) | an unbounded query like `MATCH (n) RETURN n` isn't capped — harmless at 166 nodes today, matters once the graph grows, and the function meant to add `LIMIT` isn't called |
 
 ## Considered, not needed for this project
 

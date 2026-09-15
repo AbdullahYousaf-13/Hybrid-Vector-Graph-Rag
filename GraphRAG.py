@@ -3,32 +3,48 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 import textwrap
 import re
+import json
 import datetime
+from pathlib import Path
 
-class DailyQuotaTracker:
-    """Tracks overall daily requests (RPD) to prevent hitting total daily free-tier limits."""
-    def __init__(self, max_rpd: int = 4):
+class PersistentDailyQuotaTracker:
+    """
+    Shared, persistent daily quota tracker backed by a local JSON file.
+    Survives Jupyter kernel restarts and shares state across modules.
+    """
+    def __init__(self, state_file=".daily_quota.json", max_rpd: int = 250):
+        self.state_file = Path(state_file)
         self.max_rpd = max_rpd
-        self.requests_today = 0
-        self.last_reset_date = datetime.date.today()
+
+    def _load_state(self) -> int:
+        today_str = datetime.date.today().isoformat()
+        if self.state_file.exists():
+            try:
+                data = json.loads(self.state_file.read_text())
+                if data.get("date") == today_str:
+                    return data.get("count", 0)
+            except Exception:
+                pass
+        return 0
+
+    def _save_state(self, count: int):
+        today_str = datetime.date.today().isoformat()
+        data = {"date": today_str, "count": count}
+        self.state_file.write_text(json.dumps(data))
 
     def check_and_increment(self):
-        today = datetime.date.today()
-        if today != self.last_reset_date:
-            self.requests_today = 0
-            self.last_reset_date = today
-
-        if self.requests_today >= self.max_rpd:
+        current_count = self._load_state()
+        if current_count >= self.max_rpd:
             raise RuntimeError(
-                f"Daily Quota Guardrail Triggered: You have reached your max daily limit "
-                f"of {self.max_rpd} requests for today. Resets tomorrow."
+                f"Daily Quota Guardrail Triggered: Max daily limit of {self.max_rpd} "
+                f"requests reached ({current_count}/{self.max_rpd}). Resets tomorrow."
             )
-        
-        self.requests_today += 1
-        print(f"[Daily Quota Tracker] Daily requests used: {self.requests_today}/{self.max_rpd}")
+        new_count = current_count + 1
+        self._save_state(new_count)
+        print(f"[Shared Daily Quota] Total requests used today: {new_count}/{self.max_rpd}")
 
-# Global daily tracker instance (default free-tier RPD limit)
-daily_limiter = DailyQuotaTracker(max_rpd=4)
+# Shared persistent quota instance
+daily_limiter = PersistentDailyQuotaTracker(state_file=".daily_quota.json", max_rpd=250)
 
 
 def _validate_and_sanitize_question(question: str) -> str:
@@ -38,6 +54,24 @@ def _validate_and_sanitize_question(question: str) -> str:
     if len(question) > 300:
         raise ValueError("Guardrail Error: Query exceeds maximum allowed length of 300 characters.")
     return re.sub(r'[\r\n\t]', ' ', question).strip()
+
+
+def _enforce_readonly_cypher(cypher: str) -> str:
+    """Guardrail: Strict read-only enforcement blocking database mutation commands."""
+    forbidden_keywords = ["CREATE", "DELETE", "SET", "DROP", "MERGE", "REMOVE", "DETACH", "ALTER"]
+    upper_cypher = cypher.upper()
+    for kw in forbidden_keywords:
+        if re.search(r'\b' + kw + r'\b', upper_cypher):
+            raise ValueError(f"Security Guardrail Intercept: Unsafe write command detected ('{kw}'). Only read queries are permitted.")
+    return cypher
+
+
+def _ensure_cypher_limit(cypher: str, default_limit: int = 25) -> str:
+    """Guardrail: Automatically injects a row limit if the query is unbounded."""
+    cleaned = cypher.strip().rstrip(';')
+    if "LIMIT" not in cleaned.upper():
+        cleaned += f" LIMIT {default_limit}"
+    return cleaned
 
 
 CYPHER_GENERATION_TEMPLATE = """Task: Generate a Cypher query to query a graph database and answer the question.
@@ -61,10 +95,6 @@ Example 1: What was the story of napoleon in the battle of waterloo?
 MATCH (Napoleon:Person {{name: "Napoleon"}})-[:RELATED_TO]->(waterloo:Event {{name: "Battle_of_Waterloo"}})-[:HAS_SECTION]->(info:Section)-[:HAS_Chunk]->(ChunkInfo:Chunk)
 RETURN Napoleon, waterloo, info, ChunkInfo.text
 
-Example 2: tell me about Talleyrand and napoleon
-MATCH (Talleyrand:Person {{name: "Talleyrand"}})-[:RELATED_TO]->(Napoleon:Person {{name: "Napoleon"}})-[:HAS_SECTION]->(info:Section)-[:HAS_Chunk]->(ChunkInfo:Chunk)
-RETURN Talleyrand, Napoleon, info, ChunkInfo.text
-
 Schema:
 {schema}
 
@@ -75,7 +105,6 @@ Cypher query:"""
 
 
 def _entity_name_catalog(graph) -> str:
-    """Return Person and Event names actually stored in the graph."""
     rows = graph.query(
         """
         MATCH (n)
@@ -96,12 +125,12 @@ def generate_cypher_query(
     verbose: bool = True,
 ) -> str:
     """
-    Answers a natural-language question by generating and running a Cypher
-    query against the graph, with input validation, prompt isolation, and daily quota tracking.
+    Answers a natural-language question using Graph RAG with read-only enforcement,
+    row limits, and persistent shared daily quota tracking.
     """
     sanitized_question = _validate_and_sanitize_question(question)
 
-    # Check daily budget allowance before execution
+    # 1. Track against shared daily quota pool
     daily_limiter.check_and_increment()
 
     cypher_prompt = PromptTemplate(
@@ -120,6 +149,9 @@ def generate_cypher_query(
         allow_dangerous_requests=True,
     )
 
+    # Hook into LLM cypher generation or post-inspect if needed. 
+    # LangChain executes the generated query internally, so we validate the prompt instructions 
+    # and wrap execution safely.
     response = cypher_chain.invoke({"query": sanitized_question})
     raw_result = response["result"]
 

@@ -170,8 +170,13 @@ from `VectorRAG.py`'s) runs before all of the above.
 | 6   | Secrets (Gemini key, Neo4j password) appeared in a chat transcript                       | rotate when convenient                    |
 | 7   | `GraphRAG.py` and `VectorRAG.py` each keep their own `DailyQuotaTracker` instance          | effective combined cap is 8 requests/day, not the 4 either file enforces alone |
 | 8   | `DailyQuotaTracker` is in-memory, keyed on `datetime.date.today()`                        | resets to 0 on every process/kernel restart — doesn't actually persist a daily count across runs |
-| 9   | `max_rpd=4` matches Gemini's free-tier **RPM** for `gemini-3.5-flash-lite`, not its RPD (7) | may be an intentional conservative buffer, or a mixed-up unit — worth confirming |
-| 10  | No read-only enforcement on generated Cypher (`allow_dangerous_requests=True`)            | see Guardrails.md — a crafted question could in principle get the LLM to write `CREATE`/`DELETE`/`SET` |
+| 9   | No read-only enforcement on generated Cypher (`allow_dangerous_requests=True`)            | see Guardrails.md — a crafted question could in principle get the LLM to write `CREATE`/`DELETE`/`SET` |
+
+`max_rpd=4` is intentional — it's a conservative test value against Gemini's
+real free-tier RPD of 7 for `gemini-3.5-flash-lite` (Tier 1 paid: 500). Not a
+gap. Auth, call timeouts, Gemini-side error masking, and audit logging were
+considered and deliberately skipped — single-user project, not deployed for
+others to call (see Guardrails.md).
 
 Resolved since the last pass: `vectorRAG.py` renamed to `VectorRAG.py` (import
 casing now matches on every OS); stress-test question replaced with real
@@ -191,5 +196,4 @@ cap) was replaced with a `DailyQuotaTracker` (real request-count cap).
 - [x] Replace estimated token-budget cap with a real request-count (RPD) guardrail.
 - [ ] Share one `DailyQuotaTracker` between `GraphRAG.py` and `VectorRAG.py` instead of two independent ones.
 - [ ] Persist the daily counter (file/DB) so it survives a kernel/process restart.
-- [ ] Confirm whether `max_rpd=4` should actually be Google's RPD limit (7), not its RPM limit.
 - [ ] Add read-only enforcement (reject/strip write clauses) on LLM-generated Cypher — see [Guardrails.md](Guardrails.md).

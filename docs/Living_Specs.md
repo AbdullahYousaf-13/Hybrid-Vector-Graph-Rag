@@ -49,10 +49,10 @@ KG/
                  create_vector_index, embed_text
 VectorRAG.py     query_vector_rag(question, index, label, text_prop, emb_prop)
                  input validation, prompt-injection isolation, retrieval/
-                 context/token-budget cost guardrails (see docs/Guardrails.md)
+                 context caps, daily quota tracking (see docs/Guardrails.md)
 GraphRAG.py      generate_cypher_query(question, graph)
                  input validation, prompt-injection isolation, entity-name
-                 allow-list, token-budget cost guardrail
+                 allow-list, daily quota tracking
 prep.ipynb       one-time ingestion pipeline (§6)
 main.ipynb       query entry point (§7)
 data/*.json      source corpus: {section_name: section_text}
@@ -133,8 +133,10 @@ question
   -> retriever.invoke(question)               # top k=3 chunks by cosine (capped for cost)
   -> stuff chunk text into <context>, truncate to 3500 chars
   -> ChatPromptTemplate (<user_input> tag marks it untrusted) | gemini-3.5-flash-lite | StrOutputParser
-  -> session_budget.track_and_check(...)      # raises if session > 15,000 (rough) tokens
   -> answer (wrapped to 60 cols)
+
+daily_limiter.check_and_increment() runs before all of the above — raises if
+today's request count has already reached max_rpd (4)
 ```
 
 Answers strictly from retrieved chunk text ("say you don't know" otherwise).
@@ -148,9 +150,11 @@ question
   -> PromptTemplate(schema, question wrapped in <user_question>, entity_names, few-shot examples)
   -> GraphCypherQAChain.from_llm(gemini-3.5-flash-lite, allow_dangerous_requests=True)
        -> LLM writes Cypher -> run on graph -> LLM summarizes rows
-  -> session_budget.track_and_check(...)      # separate budget instance from VectorRAG's
   -> answer (wrapped to 60 cols)
 ```
+
+`daily_limiter.check_and_increment()` (its own `DailyQuotaTracker`, separate
+from `VectorRAG.py`'s) runs before all of the above.
 
 ---
 
@@ -164,12 +168,15 @@ question
 | 4   | No `requirements.txt` / lockfile                                                         | environment not reproducible              |
 | 5   | `id()` used in relationship Cypher (`prep.ipynb`)                                        | deprecation warnings; use `elementId()`   |
 | 6   | Secrets (Gemini key, Neo4j password) appeared in a chat transcript                       | rotate when convenient                    |
-| 7   | `GraphRAG.py` and `VectorRAG.py` each keep their own `SessionTokenBudget` instance        | the 15,000-token cap is per-file, not shared — a session can spend ~30k by alternating calls |
-| 8   | No read-only enforcement on generated Cypher (`allow_dangerous_requests=True`)            | see Guardrails.md — a crafted question could in principle get the LLM to write `CREATE`/`DELETE`/`SET` |
+| 7   | `GraphRAG.py` and `VectorRAG.py` each keep their own `DailyQuotaTracker` instance          | effective combined cap is 8 requests/day, not the 4 either file enforces alone |
+| 8   | `DailyQuotaTracker` is in-memory, keyed on `datetime.date.today()`                        | resets to 0 on every process/kernel restart — doesn't actually persist a daily count across runs |
+| 9   | `max_rpd=4` matches Gemini's free-tier **RPM** for `gemini-3.5-flash-lite`, not its RPD (7) | may be an intentional conservative buffer, or a mixed-up unit — worth confirming |
+| 10  | No read-only enforcement on generated Cypher (`allow_dangerous_requests=True`)            | see Guardrails.md — a crafted question could in principle get the LLM to write `CREATE`/`DELETE`/`SET` |
 
 Resolved since the last pass: `vectorRAG.py` renamed to `VectorRAG.py` (import
 casing now matches on every OS); stress-test question replaced with real
-sample questions in `main.ipynb`.
+sample questions in `main.ipynb`; the old `SessionTokenBudget` (token-estimate
+cap) was replaced with a `DailyQuotaTracker` (real request-count cap).
 
 ---
 
@@ -181,5 +188,8 @@ sample questions in `main.ipynb`.
 - [ ] `requirements.txt` (langchain, langchain-neo4j, langchain-google-genai, langchain-text-splitters, neo4j, python-dotenv, tqdm, numpy).
 - [x] Rename `vectorRAG.py` → `VectorRAG.py` for portability.
 - [ ] Add 10 evaluation questions with expected answers.
-- [ ] Share one `SessionTokenBudget` between `GraphRAG.py` and `VectorRAG.py` instead of two independent ones.
+- [x] Replace estimated token-budget cap with a real request-count (RPD) guardrail.
+- [ ] Share one `DailyQuotaTracker` between `GraphRAG.py` and `VectorRAG.py` instead of two independent ones.
+- [ ] Persist the daily counter (file/DB) so it survives a kernel/process restart.
+- [ ] Confirm whether `max_rpd=4` should actually be Google's RPD limit (7), not its RPM limit.
 - [ ] Add read-only enforcement (reject/strip write clauses) on LLM-generated Cypher — see [Guardrails.md](Guardrails.md).

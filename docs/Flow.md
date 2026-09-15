@@ -55,11 +55,11 @@ embed_text(graph, gemini_api, "Chunk", batch_size=32)    # 5b     (Gemini gemini
 ```mermaid
 flowchart LR
     Q[question] --> V[validate & sanitize]
-    V --> E[embed question]
+    V --> D[check daily quota]
+    D --> E[embed question]
     E --> S[find 3 closest chunks]
     S --> P[put chunks in prompt<br/>capped 3500 chars]
     P --> L[Gemini writes answer]
-    L --> B[track token budget]
 ```
 
 ### What happens at each step
@@ -67,12 +67,12 @@ flowchart LR
 | # | Step | Where | Tool used | Details |
 |---|------|-------|-----------|---------|
 | 0 | Validate & sanitize | `_validate_and_sanitize_question` (`VectorRAG.py`) | plain Python | **guardrail**: rejects empty input and anything over 300 chars, strips `\r\n\t` |
-| 1 | Connect to the index | `Neo4jVector.from_existing_graph` (`VectorRAG.py`) | `langchain-neo4j` | points at index `Chunk`, text prop `text`, vector prop `textEmbedding` |
-| 2 | Embed the question | same call's `embedding=` | **Gemini `gemini-embedding-001`** via `langchain-google-genai` `GoogleGenerativeAIEmbeddings` | task `RETRIEVAL_QUERY`, **768 dims** (must match the stored vectors) |
-| 3 | Find nearest chunks | `.as_retriever(search_kwargs={"k": 3}).invoke(...)` | Neo4j `db.index.vector.queryNodes` | top **3** by cosine similarity — capped at 3 (was 4) as a cost guardrail |
-| 4 | Build context | `"\n\n".join(...)`, then truncate | plain Python | **guardrail**: context string hard-capped at 3500 chars to bound the prompt sent to the LLM |
-| 5 | Write the answer | `prompt \| llm \| StrOutputParser()` | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI`, LCEL chain | system rule: answer only from context, else "I don't know"; the human message wraps the question in `<user_input>` tags marked untrusted (**prompt-injection guardrail**); `StrOutputParser` flattens Gemini's list-shaped output; `textwrap.fill(60)` wraps it |
-| 6 | Track budget | `session_budget.track_and_check(...)` (`VectorRAG.py`) | plain Python | **guardrail**: estimates tokens as `chars / 4`, raises `RuntimeError` once this session (this file's own counter) passes 15,000 |
+| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`VectorRAG.py`) | plain Python `DailyQuotaTracker` | **guardrail**: raises `RuntimeError` once today's request count reaches `max_rpd` (4); counter resets when the date rolls over |
+| 2 | Connect to the index | `Neo4jVector.from_existing_graph` (`VectorRAG.py`) | `langchain-neo4j` | points at index `Chunk`, text prop `text`, vector prop `textEmbedding` |
+| 3 | Embed the question | same call's `embedding=` | **Gemini `gemini-embedding-001`** via `langchain-google-genai` `GoogleGenerativeAIEmbeddings` | task `RETRIEVAL_QUERY`, **768 dims** (must match the stored vectors) |
+| 4 | Find nearest chunks | `.as_retriever(search_kwargs={"k": 3}).invoke(...)` | Neo4j `db.index.vector.queryNodes` | top **3** by cosine similarity — capped at 3 (was 4) as a cost guardrail |
+| 5 | Build context | `"\n\n".join(...)`, then truncate | plain Python | **guardrail**: context string hard-capped at 3500 chars to bound the prompt sent to the LLM |
+| 6 | Write the answer | `prompt \| llm \| StrOutputParser()` | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI`, LCEL chain | system rule: answer only from context, else "I don't know"; the human message wraps the question in `<user_input>` tags marked untrusted (**prompt-injection guardrail**); `StrOutputParser` flattens Gemini's list-shaped output; `textwrap.fill(60)` wraps it |
 
 ### The code
 
@@ -80,19 +80,19 @@ flowchart LR
 # VectorRAG.py, simplified
 def query_vector_rag(question, ...):
     question = _validate_and_sanitize_question(question)                  # 0  guardrail
+    daily_limiter.check_and_increment()                                   # 1  guardrail (RPD cap)
 
-    store = Neo4jVector.from_existing_graph(                               # 1
-        embedding=GoogleGenerativeAIEmbeddings(                           # 2  Gemini gemini-embedding-001, 768d
+    store = Neo4jVector.from_existing_graph(                               # 2
+        embedding=GoogleGenerativeAIEmbeddings(                           # 3  Gemini gemini-embedding-001, 768d
             model="models/gemini-embedding-001",
             task_type="RETRIEVAL_QUERY", output_dimensionality=768),
         index_name="Chunk", ...)
-    chunks  = store.as_retriever(search_kwargs={"k": 3}).invoke(question) # 3  top-3 by cosine
-    context = "\n\n".join(c.page_content for c in chunks)[:3500]          # 4  capped
+    chunks  = store.as_retriever(search_kwargs={"k": 3}).invoke(question) # 4  top-3 by cosine
+    context = "\n\n".join(c.page_content for c in chunks)[:3500]          # 5  capped
 
     prompt = "...<user_input>{input}</user_input>..."                     # marks input untrusted
-    chain  = prompt | ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite") | StrOutputParser()  # 5
+    chain  = prompt | ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite") | StrOutputParser()  # 6
     result = chain.invoke({"context": context, "input": question})
-    session_budget.track_and_check(question + context, result)            # 6  guardrail
     return textwrap.fill(result, 60)
 ```
 
@@ -103,10 +103,10 @@ def query_vector_rag(question, ...):
 ```mermaid
 flowchart LR
     Q[question] --> V[validate & sanitize]
-    V --> C[Gemini writes Cypher]
+    V --> D[check daily quota]
+    D --> C[Gemini writes Cypher]
     C --> R[run Cypher on Neo4j]
     R --> A[Gemini summarizes rows]
-    A --> B[track token budget]
 ```
 
 ### What happens at each step
@@ -114,10 +114,10 @@ flowchart LR
 | # | Step | Where | Tool used | Details |
 |---|------|-------|-----------|---------|
 | 0 | Validate & sanitize | `_validate_and_sanitize_question` (`GraphRAG.py`) | plain Python | **guardrail**: same rule as Vector RAG — reject empty/>300 chars, strip `\r\n\t` |
-| 1 | Collect real names | `_entity_name_catalog(graph)` (`GraphRAG.py`) | Cypher `MATCH (n) WHERE n:Person OR n:Event` | **guardrail**: allow-list so the LLM uses `Napoleon`, `Battle_of_Waterloo`, … and doesn't invent slugs |
-| 2 | Build the prompt | `PromptTemplate` (`langchain-core`) | `CYPHER_GENERATION_TEMPLATE` | fills in `{schema}` (from Neo4j), `{entity_names}`, few-shot examples, and wraps `{question}` in `<user_question>` tags marked untrusted (**prompt-injection guardrail**) |
-| 3 | Write + run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`) | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI` | chain internally: LLM writes Cypher → runs it on `graph` → LLM turns rows into a sentence. `allow_dangerous_requests=True` because LLM-written Cypher runs on the DB — **no read-only check yet**, see `docs/Guardrails.md` |
-| 4 | Track budget | `session_budget.track_and_check(...)` (`GraphRAG.py`) | plain Python | **guardrail**: same idea as Vector RAG, but a *separate* counter — not shared with `VectorRAG.py`'s budget |
+| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`GraphRAG.py`) | plain Python `DailyQuotaTracker` | **guardrail**: separate instance from `VectorRAG.py`'s — raises once today's count reaches `max_rpd` (4) |
+| 2 | Collect real names | `_entity_name_catalog(graph)` (`GraphRAG.py`) | Cypher `MATCH (n) WHERE n:Person OR n:Event` | **guardrail**: allow-list so the LLM uses `Napoleon`, `Battle_of_Waterloo`, … and doesn't invent slugs |
+| 3 | Build the prompt | `PromptTemplate` (`langchain-core`) | `CYPHER_GENERATION_TEMPLATE` | fills in `{schema}` (from Neo4j), `{entity_names}`, few-shot examples, and wraps `{question}` in `<user_question>` tags marked untrusted (**prompt-injection guardrail**) |
+| 4 | Write + run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`) | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI` | chain internally: LLM writes Cypher → runs it on `graph` → LLM turns rows into a sentence. `allow_dangerous_requests=True` because LLM-written Cypher runs on the DB — **no read-only check yet**, see `docs/Guardrails.md` |
 | 5 | Format | `textwrap.fill(response["result"], 60)` | plain Python | wrap to 60 columns |
 
 ### The code
@@ -126,17 +126,17 @@ flowchart LR
 # GraphRAG.py, simplified
 def generate_cypher_query(question, graph):
     question = _validate_and_sanitize_question(question)          # 0  guardrail
+    daily_limiter.check_and_increment()                           # 1  guardrail (RPD cap)
 
-    names  = _entity_name_catalog(graph)                          # 1  real Person/Event names
-    prompt = PromptTemplate(template=CYPHER_GENERATION_TEMPLATE,   # 2  {question} wrapped as untrusted
+    names  = _entity_name_catalog(graph)                          # 2  real Person/Event names
+    prompt = PromptTemplate(template=CYPHER_GENERATION_TEMPLATE,   # 3  {question} wrapped as untrusted
                             partial_variables={"entity_names": names})
 
-    chain = GraphCypherQAChain.from_llm(                          # 3  Gemini gemini-3.5-flash-lite
+    chain = GraphCypherQAChain.from_llm(                          # 4  Gemini gemini-3.5-flash-lite
         ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite"),
         graph=graph, cypher_prompt=prompt,
         allow_dangerous_requests=True)
     result = chain.invoke({"query": question})["result"]
-    session_budget.track_and_check(question, result)               # 4  guardrail
     return textwrap.fill(result, 60)                                # 5
 ```
 

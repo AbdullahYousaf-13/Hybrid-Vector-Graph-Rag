@@ -4,18 +4,35 @@ from langchain_core.prompts import PromptTemplate
 import textwrap
 import re
 
+class SessionTokenBudget:
+    """Tracks cumulative token usage per session and blocks requests if budget is exceeded."""
+    def __init__(self, max_session_tokens: int = 15000):
+        self.max_session_tokens = max_session_tokens
+        self.current_tokens_used = 0
+
+    def track_and_check(self, prompt_text: str, response_text: str):
+        estimated_tokens = (len(prompt_text) + len(response_text)) / 4
+        if self.current_tokens_used + estimated_tokens > self.max_session_tokens:
+            raise RuntimeError(
+                f"Cost Guardrail Triggered: Session token budget exceeded. "
+                f"Used: {int(self.current_tokens_used)} / Limit: {self.max_session_tokens}"
+            )
+        self.current_tokens_used += estimated_tokens
+        return estimated_tokens
+
+# Global session budget instance for tracking
+session_budget = SessionTokenBudget(max_session_tokens=15000)
+
+
 def _validate_and_sanitize_question(question: str) -> str:
     """Guardrail: Validate length and sanitize the query string."""
     if not question or not question.strip():
         raise ValueError("Guardrail Error: Query cannot be empty.")
     if len(question) > 300:
         raise ValueError("Guardrail Error: Query exceeds maximum allowed length of 300 characters.")
-    # Remove control characters or injection-like whitespace anomalies
     return re.sub(r'[\r\n\t]', ' ', question).strip()
 
 
-# Prompt used to turn a natural-language question into a Cypher query with strict data vs instruction isolation.
-# {entity_names} is filled in at runtime from Person/Event nodes in the graph.
 CYPHER_GENERATION_TEMPLATE = """Task: Generate a Cypher query to query a graph database and answer the question.
 
 Instructions:
@@ -71,22 +88,21 @@ def generate_cypher_query(
     temperature: float = 0,
     verbose: bool = True,
 ) -> str:
-    # 1. Apply Input Validation & Sanitization Guardrail
+    """
+    Answers a natural-language question by generating and running a Cypher
+    query against the graph, with input validation, prompt isolation, and session budget guardrails.
+    """
+    # 1. Input Validation Guardrail
     sanitized_question = _validate_and_sanitize_question(question)
 
-    # 2. Apply Domain Scope Guardrail
-    allowed_topics = ["napoleon", "waterloo", "talleyrand", "battle", "reform", "story", "section", "person", "event"]
-    if not any(topic in sanitized_question.lower() for topic in allowed_topics):
-        return "Guardrail Intercept: I am restricted to answering questions related to historical events, figures like Napoleon and Talleyrand, and the loaded document sections."
-
-    # 3. Proceed with Cypher Generation...
     cypher_prompt = PromptTemplate(
         input_variables=["schema", "question"],
         template=CYPHER_GENERATION_TEMPLATE,
         partial_variables={"entity_names": _entity_name_catalog(graph)},
     )
 
-    llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=temperature)
+    # Updated to an active available Flash model endpoint
+    llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", temperature=temperature)
 
     cypher_chain = GraphCypherQAChain.from_llm(
         llm,
@@ -97,4 +113,9 @@ def generate_cypher_query(
     )
 
     response = cypher_chain.invoke({"query": sanitized_question})
-    return textwrap.fill(response["result"], 60)
+    raw_result = response["result"]
+
+    # 2. Cost Guardrail: Session Token Budget Tracking & Enforcement
+    session_budget.track_and_check(sanitized_question, raw_result)
+
+    return textwrap.fill(raw_result, 60)

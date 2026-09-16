@@ -149,10 +149,21 @@ def generate_cypher_query(
         allow_dangerous_requests=True,
     )
 
-    # Hook into LLM cypher generation or post-inspect if needed. 
-    # LangChain executes the generated query internally, so we validate the prompt instructions 
-    # and wrap execution safely.
-    response = cypher_chain.invoke({"query": sanitized_question})
-    raw_result = response["result"]
+    # Guardrail: intercept the exact Cypher the chain is about to run against
+    # Neo4j. graph.query is the only place GraphCypherQAChain actually
+    # executes the LLM-written query, so wrap it just for this call.
+    original_query = graph.query
 
+    def _guarded_query(cypher, *args, **kwargs):
+        cypher = _enforce_readonly_cypher(cypher)  # raises on CREATE/DELETE/SET/...
+        cypher = _ensure_cypher_limit(cypher)       # adds LIMIT if missing
+        return original_query(cypher, *args, **kwargs)
+
+    graph.query = _guarded_query
+    try:
+        response = cypher_chain.invoke({"query": sanitized_question})
+    finally:
+        graph.query = original_query  # always restore, even if this raised
+
+    raw_result = response["result"]
     return textwrap.fill(raw_result, 60)

@@ -105,7 +105,8 @@ flowchart LR
     Q[question] --> V[validate & sanitize]
     V --> D[check daily quota]
     D --> C[Gemini writes Cypher]
-    C --> R[run Cypher on Neo4j]
+    C --> G[guarded graph.query:<br/>reject writes, add LIMIT]
+    G --> R[run Cypher on Neo4j]
     R --> A[Gemini summarizes rows]
 ```
 
@@ -117,7 +118,7 @@ flowchart LR
 | 1 | Check daily quota | `daily_limiter.check_and_increment()` (`GraphRAG.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: shared counter with `VectorRAG.py` — raises once today's combined count reaches `max_rpd` (250); survives a kernel restart |
 | 2 | Collect real names | `_entity_name_catalog(graph)` (`GraphRAG.py`) | Cypher `MATCH (n) WHERE n:Person OR n:Event` | **guardrail**: allow-list so the LLM uses `Napoleon`, `Battle_of_Waterloo`, … and doesn't invent slugs |
 | 3 | Build the prompt | `PromptTemplate` (`langchain-core`) | `CYPHER_GENERATION_TEMPLATE` | fills in `{schema}` (from Neo4j), `{entity_names}`, few-shot examples, and wraps `{question}` in `<user_question>` tags marked untrusted (**prompt-injection guardrail**) |
-| 4 | Write + run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`) | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI` | chain internally: LLM writes Cypher → runs it on `graph` → LLM turns rows into a sentence. `allow_dangerous_requests=True`, and no check runs before execution — `_enforce_readonly_cypher()`/`_ensure_cypher_limit()` exist in this file but are **never called** (dead code), see `docs/Guardrails.md` |
+| 4 | Write + guarded run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`), with `graph.query` wrapped | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI` | chain internally: LLM writes Cypher → the wrapped `graph.query` runs `_enforce_readonly_cypher()` (raises on `CREATE`/`DELETE`/`SET`/etc.) then `_ensure_cypher_limit()` (adds `LIMIT 25` if missing) → the *checked* query actually executes → LLM turns rows into a sentence |
 | 5 | Format | `textwrap.fill(response["result"], 60)` | plain Python | wrap to 60 columns |
 
 ### The code
@@ -136,7 +137,18 @@ def generate_cypher_query(question, graph):
         ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite"),
         graph=graph, cypher_prompt=prompt,
         allow_dangerous_requests=True)
-    result = chain.invoke({"query": question})["result"]
+
+    original_query = graph.query                                  # 4  guardrail: wrap execution
+    def _guarded_query(cypher, *a, **kw):
+        cypher = _enforce_readonly_cypher(cypher)                 #     block write keywords
+        cypher = _ensure_cypher_limit(cypher)                     #     add LIMIT if missing
+        return original_query(cypher, *a, **kw)
+    graph.query = _guarded_query
+    try:
+        result = chain.invoke({"query": question})["result"]
+    finally:
+        graph.query = original_query                              #     always restore
+
     return textwrap.fill(result, 60)                                # 5
 ```
 

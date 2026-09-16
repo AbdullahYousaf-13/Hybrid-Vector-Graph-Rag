@@ -3,7 +3,7 @@
 > A "living" spec: it describes the system **as it is today**, not a frozen plan.
 > Update it whenever behaviour, schema, or the stack changes.
 
-Last updated: 2026-09-15
+Last updated: 2026-09-16
 
 ---
 
@@ -52,7 +52,8 @@ VectorRAG.py     query_vector_rag(question, index, label, text_prop, emb_prop)
                  context caps, daily quota tracking (see docs/Guardrails.md)
 GraphRAG.py      generate_cypher_query(question, graph)
                  input validation, prompt-injection isolation, entity-name
-                 allow-list, daily quota tracking
+                 allow-list, daily quota tracking, read-only + row-limit
+                 enforcement on generated Cypher (via a graph.query wrapper)
 prep.ipynb       one-time ingestion pipeline (§6)
 main.ipynb       query entry point (§7)
 data/*.json      source corpus: {section_name: section_text}
@@ -150,16 +151,19 @@ question
   -> _entity_name_catalog(graph)              # real Person/Event names, used as allow-list
   -> PromptTemplate(schema, question wrapped in <user_question>, entity_names, few-shot examples)
   -> GraphCypherQAChain.from_llm(gemini-3.5-flash-lite, allow_dangerous_requests=True)
-       -> LLM writes Cypher -> run on graph -> LLM summarizes rows
+       -> graph.query wrapped: _enforce_readonly_cypher, _ensure_cypher_limit
+       -> LLM writes Cypher -> guarded run on graph -> LLM summarizes rows
   -> answer (wrapped to 60 cols)
 ```
 
 `daily_limiter.check_and_increment()` runs before all of the above, sharing
-the same `.daily_quota.json` counter as `VectorRAG.py`.
-
-⚠️ `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` are defined in
-this file but **not called anywhere** — dead code today, not active
-guardrails. See [Guardrails.md](Guardrails.md).
+the same `.daily_quota.json` counter as `VectorRAG.py`. `graph.query` is
+temporarily wrapped for the duration of `cypher_chain.invoke(...)` — every
+generated Cypher string passes through `_enforce_readonly_cypher()` (raises
+on write keywords) and `_ensure_cypher_limit()` (adds `LIMIT 25` if missing)
+right before it reaches Neo4j, then the original method is restored in a
+`finally` block. See [Guardrails.md](Guardrails.md) for why this shape was
+needed (`GraphCypherQAChain` has no pre-exec hook).
 
 ---
 
@@ -173,18 +177,21 @@ guardrails. See [Guardrails.md](Guardrails.md).
 | 4   | No `requirements.txt` / lockfile                                                         | environment not reproducible              |
 | 5   | `id()` used in relationship Cypher (`prep.ipynb`)                                        | deprecation warnings; use `elementId()`   |
 | 6   | Secrets (Gemini key, Neo4j password) appeared in a chat transcript                       | rotate when convenient                    |
-| 7   | `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` (`GraphRAG.py`) are defined but never called | dead code — read-only and row-limit protection do not actually run; confirmed live (executed Cypher in `main.ipynb` has no `LIMIT`) |
+All items from the previous pass are resolved — see below.
 
-Auth, call timeouts, Gemini-side error masking, and audit logging were
-considered and deliberately skipped — single-user project, not deployed for
-others to call (see Guardrails.md).
+Auth, call timeouts, Gemini-side error masking, audit logging, and forcing
+Graph RAG to answer biographical/relational questions via chunk text were
+considered and deliberately skipped (see Guardrails.md's "Considered, not
+needed" table for why each one).
 
 Resolved since the last pass: `vectorRAG.py` renamed to `VectorRAG.py` (import
 casing now matches on every OS); stress-test question replaced with real
 sample questions in `main.ipynb`; the old `SessionTokenBudget` (token-estimate
 cap) was replaced with a `PersistentDailyQuotaTracker` — one shared counter
 (`.daily_quota.json`, gitignored) read and written by both `GraphRAG.py` and
-`VectorRAG.py`, `max_rpd=250`, survives a kernel/process restart.
+`VectorRAG.py`, `max_rpd=250`, survives a kernel/process restart;
+`_enforce_readonly_cypher()` and `_ensure_cypher_limit()` are now actually
+wired in via a `graph.query` wrapper (previously defined but dead code).
 
 ---
 
@@ -199,4 +206,4 @@ cap) was replaced with a `PersistentDailyQuotaTracker` — one shared counter
 - [x] Replace estimated token-budget cap with a real request-count (RPD) guardrail.
 - [x] Share one quota tracker between `GraphRAG.py` and `VectorRAG.py` instead of two independent ones.
 - [x] Persist the daily counter (file) so it survives a kernel/process restart.
-- [ ] Actually wire `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` into `generate_cypher_query()` — they exist but are never called. See [Guardrails.md](Guardrails.md).
+- [x] Wire `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` into `generate_cypher_query()` via a `graph.query` wrapper.

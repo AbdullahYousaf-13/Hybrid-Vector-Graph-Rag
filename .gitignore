@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 .ipynb_checkpoints/
 .daily_quota.json
+backups/
+data/harry_potter_books.csv

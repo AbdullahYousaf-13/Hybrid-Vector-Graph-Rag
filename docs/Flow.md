@@ -8,8 +8,9 @@ Two phases: **load data in** (`prep.ipynb`), then **ask questions** (`main.ipynb
 
 ```mermaid
 flowchart LR
-    A[data/*.json] --> B[split into chunks]
-    B --> C[write nodes<br/>Person / Event / Section / Chunk]
+    Z[data/harry_potter_books.csv] --> A[data/Book_*.json]
+    A --> B[split into chunks]
+    B --> C[write nodes<br/>Book / Section / Chunk]
     C --> D[connect nodes<br/>with relationships]
     D --> E[embed each chunk<br/>with Gemini]
     E --> F[(Neo4j)]
@@ -19,12 +20,13 @@ flowchart LR
 
 | # | Step | Function / file | Tool used | Details |
 |---|------|-----------------|-----------|---------|
-| 1 | Read the JSON | `open() + json.load` in `split_data_from_file` (`KG/chunking.py`) | Python stdlib | each file is `{ "section name": "long text" }` |
+| 0 | CSV -> per-book JSON (one-off, not in `prep.ipynb`) | `KG/csv_to_json.py` | Python stdlib `csv`/`json` | groups `harry_potter_books.csv` rows by `book` then `chapter`, joins each chapter's rows into one text blob |
+| 1 | Read the JSON | `open() + json.load` in `split_data_from_file` (`KG/chunking.py`) | Python stdlib | each file is `{ "chapter key": "long text" }`, e.g. `{"chap-1": "...", ...}` |
 | 2 | Chunk the text | `split_data_from_file` (`KG/chunking.py`) | `RecursiveCharacterTextSplitter` (`langchain-text-splitters`) | `chunk_size=2000`, `chunk_overlap=200` chars |
-| 3 | Create nodes | `create_nodes`, `ingest_Chunks` (`KG/kg.py`) | Cypher `MERGE` via `langchain-neo4j` `Neo4jGraph` | 1 `Person`/`Event` per file, 1 `Section` per JSON key, 1 `Chunk` per piece (unique on `chunkId`) |
-| 4 | Connect nodes | `create_relationship` (`KG/kg.py`) | Cypher `MATCH … MERGE` | `Section→Chunk`, `Person→Section`, `Event→Section`, `Person↔Person`, `Person↔Event` |
+| 3 | Create nodes | `create_nodes`, `ingest_Chunks` (`KG/kg.py`) | Cypher `MERGE` via `langchain-neo4j` `Neo4jGraph` | 1 `Book` per file, 1 `Section` per chapter key, 1 `Chunk` per piece (unique on `chunkId`) |
+| 4 | Connect nodes | `create_relationship` (`KG/kg.py`) | Cypher `MATCH … MERGE` | `Section→Chunk`, `Book→Section` |
 | 5a | Create vector index | `create_vector_index` (`KG/kg.py`) | Neo4j `CREATE VECTOR INDEX` | name `Chunk`, on `n.textEmbedding`, **768 dims, cosine** |
-| 5b | Embed chunks | `embed_text` (`KG/kg.py`) | **Gemini `gemini-embedding-001`** via `google-genai` | task `RETRIEVAL_DOCUMENT`, **768 dims**, L2-normalized, batched 32, backoff on 429; written with `db.create.setNodeVectorProperty` |
+| 5b | Embed chunks | `embed_text` (`KG/kg.py`) | **Gemini `gemini-embedding-001`** via `google-genai` | task `RETRIEVAL_DOCUMENT`, **768 dims**, L2-normalized, batched 64, run per-book (`book_filter=name`) for visible progress; backoff on 429 honouring `retryDelay`; written with `db.create.setNodeVectorProperty` |
 
 Connection: `load_neo4j_graph()` (`KG/config.py`) → Neo4j Aura, database `3663f87a`.
 
@@ -33,19 +35,22 @@ Connection: `load_neo4j_graph()` (`KG/config.py`) → Neo4j Aura, database `3663
 ```python
 # prep.ipynb, simplified
 graph, gemini_api, _ = load_neo4j_graph()                # KG/config.py -> Neo4j Aura
+wipe_graph(graph, index_name="Chunk")                     # KG/backup.py -> full corpus swap
 
-for name in ["Talleyrand", "Napoleon", "Battle_of_Waterloo"]:
+file_names = ["Book_1_Philosopher_s_Stone", ..., "Book_7_Deathly_Hallows"]  # 7 books
+
+for name in file_names:
     chunks = split_data_from_file(f"data/{name}.json")   # 1 + 2  (RecursiveCharacterTextSplitter)
     data   = json.load(open(f"data/{name}.json"))
-    label  = "Event" if name == "Battle_of_Waterloo" else "Person"
-    create_nodes(graph, data, label, name)               # 3      (MERGE Person/Event + Section)
+    create_nodes(graph, data, "Book", name)               # 3      (MERGE Book + Section)
     ingest_Chunks(graph, chunks, name, "Chunk")          # 3      (MERGE Chunk on chunkId)
 
 for q in relationship_queries:
     create_relationship(graph, q)                        # 4      (MATCH ... MERGE edges)
 
 create_vector_index(graph, "Chunk")                      # 5a     (768-dim cosine index)
-embed_text(graph, gemini_api, "Chunk", batch_size=32)    # 5b     (Gemini gemini-embedding-001, 768d)
+for name in file_names:
+    embed_text(graph, gemini_api, "Chunk", batch_size=64, book_filter=name)  # 5b, per book
 ```
 
 ---
@@ -116,7 +121,7 @@ flowchart LR
 |---|------|-------|-----------|---------|
 | 0 | Validate & sanitize | `_validate_and_sanitize_question` (`GraphRAG.py`) | plain Python | **guardrail**: same rule as Vector RAG — reject empty/>300 chars, strip `\r\n\t` |
 | 1 | Check daily quota | `daily_limiter.check_and_increment()` (`GraphRAG.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: shared counter with `VectorRAG.py` — raises once today's combined count reaches `max_rpd` (250); survives a kernel restart |
-| 2 | Collect real names | `_entity_name_catalog(graph)` (`GraphRAG.py`) | Cypher `MATCH (n) WHERE n:Person OR n:Event` | **guardrail**: allow-list so the LLM uses `Napoleon`, `Battle_of_Waterloo`, … and doesn't invent slugs |
+| 2 | Collect real names | `_entity_name_catalog(graph)` (`GraphRAG.py`) | Cypher `MATCH (n) WHERE n:Person OR n:Event OR n:Book` | **guardrail**: allow-list so the LLM uses e.g. `Book_1_Philosopher_s_Stone` and doesn't invent slugs |
 | 3 | Build the prompt | `PromptTemplate` (`langchain-core`) | `CYPHER_GENERATION_TEMPLATE` | fills in `{schema}` (from Neo4j), `{entity_names}`, few-shot examples, and wraps `{question}` in `<user_question>` tags marked untrusted (**prompt-injection guardrail**) |
 | 4 | Write + guarded run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`), with `graph.query` wrapped | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI` | chain internally: LLM writes Cypher → the wrapped `graph.query` runs `_enforce_readonly_cypher()` (raises on `CREATE`/`DELETE`/`SET`/etc.) then `_ensure_cypher_limit()` (adds `LIMIT 25` if missing) → the *checked* query actually executes → LLM turns rows into a sentence |
 | 5 | Format | `textwrap.fill(response["result"], 60)` | plain Python | wrap to 60 columns |
@@ -158,11 +163,12 @@ def generate_cypher_query(question, graph):
 
 | Ask this way | Use | Why |
 |---|---|---|
-| "What did Napoleon reform?" (facts in prose) | **Vector RAG** | searches the actual chunk text |
-| "How many Person nodes?" / "Who is linked to Waterloo?" (structure) | **Graph RAG** | runs a real query over the graph |
+| "What is the Mirror of Erised?" (facts in prose) | **Vector RAG** | searches the actual chunk text |
+| "Which book does Harry fight a basilisk in?" (structure) | **Graph RAG** | runs a real query over the graph |
 
-Vector RAG sees anything written in the text (even people with no node, like
-Wellington). Graph RAG only knows the nodes you built, but its answers are exact.
+Vector RAG sees anything written in the text (even characters/events with no
+node, since only `Book` nodes exist). Graph RAG only knows the nodes you
+built, but its answers are exact.
 The planned next step is to run both and feed both results into one final prompt.
 
 ---

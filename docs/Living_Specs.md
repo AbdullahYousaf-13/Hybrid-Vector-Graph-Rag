@@ -9,8 +9,8 @@ Last updated: 2026-09-16
 
 ## 1. Purpose
 
-Answer natural-language questions about a small history corpus (Napoleon,
-Talleyrand, the Battle of Waterloo) two complementary ways:
+Answer natural-language questions about the Harry Potter book series (all 7
+books, chunked by chapter) two complementary ways:
 
 | Path           | Good at                                                                    | Backed by                       |
 | -------------- | -------------------------------------------------------------------------- | -------------------------------- |
@@ -56,7 +56,14 @@ GraphRAG.py      generate_cypher_query(question, graph)
                  enforcement on generated Cypher (via a graph.query wrapper)
 prep.ipynb       one-time ingestion pipeline (§6)
 main.ipynb       query entry point (§7)
-data/*.json      source corpus: {section_name: section_text}
+KG/csv_to_json.py  one-off converter: data/harry_potter_books.csv -> data/Book_*.json
+                   (groups CSV rows by book, then chapter; run once, not part of prep.ipynb)
+KG/backup.py     export_graph / wipe_graph / import_graph — full graph JSON
+                 backup so a corpus can be wiped and restored without
+                 re-calling the embedding API
+data/Book_*.json   source corpus: {chapter_name: chapter_text}, one file per book
+data/harry_potter_books.csv  raw source (gitignored — regenerate Book_*.json with
+                              KG/csv_to_json.py rather than committing the CSV)
 docs/            Living_Specs.md (this file), Flow.md, Guardrails.md
 ```
 
@@ -69,26 +76,27 @@ exactly (matters on Linux/CI, not just Windows).
 
 ### Nodes
 
-| Label     | Count | Key properties                                                                                                |
-| --------- | ----- | ---------------------------------------------------------------------------------------------------------------- |
-| `Chunk`   | 150   | `chunkId` (unique), `text`, `source` (= JSON section), `chunkSeqId`, `node_name`, `textEmbedding` (768-float) |
-| `Section` | 13    | `type` (= JSON section name), `parent_name`                                                                   |
-| `Person`  | 2     | `name` — `Talleyrand`, `Napoleon`                                                                             |
-| `Event`   | 1     | `name` — `Battle_of_Waterloo`                                                                                 |
+| Label     | Count                     | Key properties                                                                                                |
+| --------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `Chunk`   | ~2,500+ (chunk_size=2000) | `chunkId` (unique), `text`, `source` (= JSON chapter), `chunkSeqId`, `node_name`, `textEmbedding` (768-float) |
+| `Section` | ~210 (chapters, all books)| `type` (= JSON chapter key, e.g. `chap-1`), `parent_name`                                                     |
+| `Book`    | 7                         | `name` — e.g. `Book_1_Philosopher_s_Stone` … `Book_7_Deathly_Hallows`                                         |
 
-`name` values are **filename-derived ids** (underscores, no spaces), not
-Wikipedia titles. `GraphRAG.py` injects the real list (`_entity_name_catalog`)
-into the Cypher prompt as an allow-list so the LLM stops inventing slugs.
+`name` values are **filename-derived ids** (underscores, no spaces), not the
+human-readable book titles. `GraphRAG.py` injects the real list
+(`_entity_name_catalog`, matching `Person`/`Event`/`Book`) into the Cypher
+prompt as an allow-list so the LLM stops inventing slugs.
 
 ### Relationships
 
 | Pattern                              | Rule                                                |
 | ------------------------------------- | ----------------------------------------------------- |
 | `(Section)-[:HAS_CHUNK]->(Chunk)`    | `s.type = c.source AND s.parent_name = c.node_name` |
-| `(Person)-[:RELATED_TO]->(Person)`   | every pair, **both directions**                     |
-| `(Person)-[:RELATED_TO]->(Event)`    | every pair, **both directions**                     |
-| `(Person)-[:HAS_SECTION]->(Section)` | `p.name = s.parent_name`                            |
-| `(Event)-[:HAS_SECTION]->(Section)`  | `e.name = s.parent_name`                            |
+| `(Book)-[:HAS_SECTION]->(Section)`   | `b.name = s.parent_name`                            |
+
+Note: the old `Person↔Person` / `Person↔Event` blanket `RELATED_TO` edges
+(§8, item 2) don't have a `Book` equivalent — books aren't cross-linked to
+each other, only to their own chapters.
 
 ### Vector index
 
@@ -106,20 +114,32 @@ including what is **not** implemented yet, lives in **[Guardrails.md](Guardrails
 
 ## 6. Ingestion pipeline (`prep.ipynb`)
 
+0. `KG/csv_to_json.py` (run once, separately, before `prep.ipynb`) — converts
+   `data/harry_potter_books.csv` into one `data/Book_*.json` per book, shaped
+   as `{chapter_key: full_chapter_text}` to match what `split_data_from_file`
+   expects (same `{section_name: text}` shape the old Wikipedia JSONs used).
 1. `load_neo4j_graph()` — connect to Aura (now guarded, see §5).
-2. For each file in `["Talleyrand", "Napoleon", "Battle_of_Waterloo"]`:
-   - `split_data_from_file` — load JSON, split each section into ≤2000-char chunks.
-   - `create_nodes` — MERGE the `Person`/`Event` node + one `Section` per JSON key.
+2. `wipe_graph(graph, index_name="Chunk")` (`KG/backup.py`) — clears any
+   previous corpus before re-ingesting (full swap, not additive).
+3. For each file in `file_names` (the 7 `Book_*` basenames), printing
+   per-book progress:
+   - `split_data_from_file` — load JSON, split each chapter into ≤2000-char chunks.
+   - `create_nodes` — MERGE the `Book` node + one `Section` per chapter key.
    - `ingest_Chunks` — MERGE a `Chunk` per chunk (idempotent on `chunkId`).
-3. `create_relationship` × 5 — build the edges in §4.
-4. `create_vector_index` — create the 768-dim `Chunk` index.
-5. `embed_text` — for every `Chunk` with `textEmbedding IS NULL`:
+4. `create_relationship` × 2 — build the edges in §4 (`Section→Chunk`, `Book→Section`).
+5. `create_vector_index` — create the 768-dim `Chunk` index.
+6. `embed_text` — for every `Chunk` with `textEmbedding IS NULL`, run per-book
+   (via `book_filter=name`) for visible progress:
    - embed text with Gemini (`RETRIEVAL_DOCUMENT`, 768 dims), L2-normalize,
    - write back with `db.create.setNodeVectorProperty`,
-   - batched (32) with exponential backoff honouring the API's `retryDelay`
-     (free tier = 100 embed requests/min; each item in a batch counts as 1).
+   - batched (64) with exponential backoff, honouring the API's `retryDelay`
+     when present (free tier = 100 embed requests/min **and** 30K tokens/min
+     **and** 1000 embed requests/day — a 7-book corpus is large enough to hit
+     all three; see §8).
 
-Re-running is safe: nodes MERGE on keys, embeddings skip already-filled nodes.
+Re-running is safe: nodes MERGE on keys, embeddings skip already-filled nodes
+— but **do not re-run the `wipe_graph` cell** after embedding progress has
+started, or it erases everything embedded so far.
 
 ---
 
@@ -171,12 +191,13 @@ needed (`GraphCypherQAChain` has no pre-exec hook).
 
 | #   | Issue                                                                                    | Impact                                    |
 | --- | ------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| 1   | `RELATED_TO` created in both directions                                                  | undirected matches return each node twice |
-| 2   | `Person↔Person` / `Person↔Event` edges are blanket (all pairs), not derived from content | "related to" is not meaningful yet        |
+| 1   | `RELATED_TO` (historical, Napoleon corpus) was created in both directions                | n/a for current `Book` corpus — no `RELATED_TO` edges exist now |
+| 2   | `Person↔Person` / `Person↔Event` blanket edges (historical)                              | not used by the `Book` corpus; no `Book↔Book` equivalent exists |
 | 3   | `main.ipynb` calls the two retrievers separately                                         | not a true hybrid answer                  |
 | 4   | No `requirements.txt` / lockfile                                                         | environment not reproducible              |
 | 5   | `id()` used in relationship Cypher (`prep.ipynb`)                                        | deprecation warnings; use `elementId()`   |
 | 6   | Secrets (Gemini key, Neo4j password) appeared in a chat transcript                       | rotate when convenient                    |
+| 7   | Full Harry Potter corpus (7 books, `chunk_size=2000`) is large enough to hit the Gemini free-tier's **daily** embed quota (1000 requests/day), not just RPM/TPM | initial ingestion embedding can take multiple days to fully complete on the free tier; resumable via `book_filter` + the `textEmbedding IS NULL` check, so partial progress is never lost |
 All items from the previous pass are resolved — see below.
 
 Auth, call timeouts, Gemini-side error masking, audit logging, and forcing

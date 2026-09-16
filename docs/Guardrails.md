@@ -8,7 +8,7 @@ Last updated: 2026-09-16
 |---|---|---|
 | Input validation | `GraphRAG.py`, `VectorRAG.py` | reject empty questions and anything over 300 chars; strip `\r\n\t` so a question can't fake new prompt lines |
 | Prompt-injection isolation | `GraphRAG.py`, `VectorRAG.py` | user question wrapped in `<user_question>`/`<user_input>` tags + told to the LLM as untrusted data, so it can't be read as an instruction |
-| Entity-name allow-list | `GraphRAG.py` | LLM must match `.name` only against real Person/Event names pulled from the graph, so it can't hallucinate a fake node to query |
+| Entity-name allow-list | `GraphRAG.py` | LLM must match `.name` only against real Person/Event/Book names pulled from the graph, so it can't hallucinate a fake node to query |
 | Error / secret masking | `KG/config.py` | real Neo4j connection error (can contain URI/creds) is logged locally only; caller gets a generic message |
 | Read-only enforcement on generated Cypher | `GraphRAG.py` | `graph.query` is wrapped for the duration of each call; `_enforce_readonly_cypher()` rejects any generated query containing `CREATE`/`DELETE`/`SET`/`DROP`/`MERGE`/`REMOVE`/`DETACH`/`ALTER` before it reaches Neo4j — closes the gap `allow_dangerous_requests=True` otherwise leaves open |
 

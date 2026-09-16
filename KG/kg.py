@@ -82,9 +82,14 @@ def create_vector_index(graph, index_name):
 
 
 
-def embed_text(graph, api_key, node_name, batch_size=100):
-    """Embed all nodes of `node_name` that lack an embedding, using Gemini."""
+def embed_text(graph, api_key, node_name, batch_size=100, book_filter=None):
+    """Embed all nodes of `node_name` that lack an embedding, using Gemini.
+
+    If `book_filter` is given, only embeds Chunk nodes whose `node_name`
+    property (the book identifier set at ingestion time) matches it.
+    """
     import time
+    import re
     import numpy as np
     from google import genai
     from google.genai import types
@@ -94,19 +99,20 @@ def embed_text(graph, api_key, node_name, batch_size=100):
     DIMS = 768
 
     print("Starting embedding update...")
+    filter_clause = "AND n.node_name = $book" if book_filter else ""
     nodes = list(graph.query(f"""
         MATCH (n:{node_name})
-        WHERE n.textEmbedding IS NULL
+        WHERE n.textEmbedding IS NULL {filter_clause}
         RETURN elementId(n) AS node_id, n.text AS text
-    """))
+    """, params={"book": book_filter} if book_filter else {}))
     print(f"Found {len(nodes)} nodes without embeddings.")
 
     for i in tqdm(range(0, len(nodes), batch_size), desc="Embedding", ncols=100):
         batch = nodes[i:i + batch_size]
         texts = [r["text"] or "" for r in batch]
 
-        # retry on rate-limit / transient errors
-        for attempt in range(5):
+        # retry on rate-limit / transient errors, honoring the server's suggested delay
+        for attempt in range(6):
             try:
                 resp = client.models.embed_content(
                     model=MODEL,
@@ -118,9 +124,10 @@ def embed_text(graph, api_key, node_name, batch_size=100):
                 )
                 break
             except Exception as e:
-                if attempt == 4:
+                if attempt == 5:
                     raise
-                wait = 2 ** attempt
+                match = re.search(r"'retryDelay':\s*'(\d+)s'", str(e))
+                wait = int(match.group(1)) + 5 if match else 2 ** (attempt + 3)
                 print(f"  retry in {wait}s ({e})")
                 time.sleep(wait)
 
@@ -135,6 +142,6 @@ def embed_text(graph, api_key, node_name, batch_size=100):
                 """,
                 params={"node_id": rec["node_id"], "vector": v},
             )
-        time.sleep(1)  # stay under free-tier RPM
+        time.sleep(2)  # stay comfortably under free-tier RPM
 
     print("Finished embedding update.")

@@ -3,7 +3,7 @@
 > A "living" spec: it describes the system **as it is today**, not a frozen plan.
 > Update it whenever behaviour, schema, or the stack changes.
 
-Last updated: 2026-09-16
+Last updated: 2026-09-17
 
 ---
 
@@ -47,6 +47,19 @@ KG/
   chunking.py    split_data_from_file(path) -> list[chunk dict]
   kg.py          create_nodes, ingest_Chunks, create_relationship,
                  create_vector_index, embed_text
+  entities.py    extract_entities(graph, api_key, batch_size, book_filter) ->
+                 asks Gemini to pull characters/places/spells/etc. + relationships
+                 out of each Chunk's text, MERGEs them as :Entity nodes linked to
+                 their source Chunk via :MENTIONED_IN, with dynamic relationship
+                 types between entities (e.g. :FRIEND_OF, :TEACHES)
+  normalize_relationships.py  normalize_relationships(graph, api_key) -> one-time
+                 pass that asks Gemini to collapse near-duplicate relationship
+                 types (e.g. OWNS/OWNER_OF/OWNED_BY/POSSESSES) into one canonical
+                 type each, then rewrites the graph's edges accordingly
+  normalize_entities.py  normalize_entities(graph, api_key, limit) -> one-time
+                 pass that merges alias duplicates of the same entity (e.g.
+                 "Harry" + "Harry Potter") into one canonical :Entity node,
+                 redirecting all of that node's relationships (any type/direction)
 VectorRAG.py     query_vector_rag(question, index, label, text_prop, emb_prop)
                  input validation, prompt-injection isolation, retrieval/
                  context caps, daily quota tracking (see docs/Guardrails.md)
@@ -78,25 +91,30 @@ exactly (matters on Linux/CI, not just Windows).
 
 | Label     | Count                     | Key properties                                                                                                |
 | --------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `Chunk`   | ~2,500+ (chunk_size=2000) | `chunkId` (unique), `text`, `source` (= JSON chapter), `chunkSeqId`, `node_name`, `textEmbedding` (768-float) |
-| `Section` | ~210 (chapters, all books)| `type` (= JSON chapter key, e.g. `chap-1`), `parent_name`                                                     |
+| `Chunk`   | 3,565                     | `chunkId` (unique), `text`, `source` (= JSON chapter), `chunkSeqId`, `node_name`, `textEmbedding` (768-float) |
+| `Section` | 200 (chapters, all books) | `type` (= JSON chapter key, e.g. `chap-1`), `parent_name`                                                     |
 | `Book`    | 7                         | `name` — e.g. `Book_1_Philosopher_s_Stone` … `Book_7_Deathly_Hallows`                                         |
+| `Entity`  | ~1,800 (after dedup)      | `name`, `type` (`Character`/`Location`/`Spell`/`Object`/`Creature`/`Organization`) |
 
-`name` values are **filename-derived ids** (underscores, no spaces), not the
+`Book.name` values are **filename-derived ids** (underscores, no spaces), not the
 human-readable book titles. `GraphRAG.py` injects the real list
 (`_entity_name_catalog`, matching `Person`/`Event`/`Book`) into the Cypher
-prompt as an allow-list so the LLM stops inventing slugs.
+prompt as an allow-list so the LLM stops inventing slugs — this catalog does
+**not** include `Entity` names (too many to usefully allow-list; the LLM relies
+on `{schema}` plus a few-shot example instead, see §7).
 
 ### Relationships
 
-| Pattern                              | Rule                                                |
-| ------------------------------------- | ----------------------------------------------------- |
-| `(Section)-[:HAS_CHUNK]->(Chunk)`    | `s.type = c.source AND s.parent_name = c.node_name` |
-| `(Book)-[:HAS_SECTION]->(Section)`   | `b.name = s.parent_name`                            |
+| Pattern                                | Rule / source                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------ |
+| `(Section)-[:HAS_CHUNK]->(Chunk)`      | `s.type = c.source AND s.parent_name = c.node_name`                  |
+| `(Book)-[:HAS_SECTION]->(Section)`     | `b.name = s.parent_name`                                              |
+| `(Entity)-[:MENTIONED_IN]->(Chunk)`    | `KG/entities.py` — every entity found in a chunk links back to it     |
+| `(Entity)-[:<DYNAMIC_TYPE>]->(Entity)` | `KG/entities.py` — Gemini-extracted relation per chunk, e.g. `FRIEND_OF`, `TEACHES`, `MEMBER_OF`, `OWNS`, `ENEMY_OF`; ~130 distinct canonical types after `normalize_relationships.py` collapsed ~430 raw ones |
 
-Note: the old `Person↔Person` / `Person↔Event` blanket `RELATED_TO` edges
-(§8, item 2) don't have a `Book` equivalent — books aren't cross-linked to
-each other, only to their own chapters.
+Note: books aren't cross-linked to each other directly — any cross-book
+connection between characters/places now flows through shared `Entity` nodes
+(e.g. two `Book`s both having chunks that `MENTIONED_IN` the same `Entity`).
 
 ### Vector index
 
@@ -136,10 +154,29 @@ including what is **not** implemented yet, lives in **[Guardrails.md](Guardrails
      when present (free tier = 100 embed requests/min **and** 30K tokens/min
      **and** 1000 embed requests/day — a 7-book corpus is large enough to hit
      all three; see §8).
+7. `extract_entities` (`KG/entities.py`), run per-book: for each `Chunk`, ask
+   Gemini (`gemini-3.5-flash-lite`, separate quota pool from embedding) to
+   return characters/places/spells/etc. plus relationships between them as
+   JSON; MERGE the results as `Entity` nodes + `MENTIONED_IN` + dynamic
+   relationship-type edges. Marks each processed chunk with
+   `c.entitiesExtracted = true` so re-running only covers what's left.
+8. `normalize_relationships` (`KG/normalize_relationships.py`), run once after
+   extraction finishes for all books: collects every non-structural
+   relationship type + its count, asks Gemini for a canonical-name mapping in
+   one call, then rewrites (`MERGE` + `DELETE`) each old-type edge to its
+   canonical type.
+9. `normalize_entities` (`KG/normalize_entities.py`), run once: takes the
+   top N (default 400) most-connected `Entity` nodes, asks Gemini to group
+   alias variants of the same entity (e.g. "Harry" / "Harry Potter") under one
+   canonical name, then redirects every relationship (any type, any direction)
+   from each alias onto the canonical node and deletes the alias.
 
-Re-running is safe: nodes MERGE on keys, embeddings skip already-filled nodes
-— but **do not re-run the `wipe_graph` cell** after embedding progress has
-started, or it erases everything embedded so far.
+Re-running steps 1-6 is safe: nodes MERGE on keys, embeddings skip
+already-filled nodes — but **do not re-run the `wipe_graph` cell** after
+embedding progress has started, or it erases everything embedded so far.
+Steps 7-9 are also safe to re-run (idempotent MERGEs), but 8 and 9 are meant
+to run once each, after extraction is fully done — running them mid-extraction
+would only normalize a partial graph.
 
 ---
 
@@ -198,6 +235,8 @@ needed (`GraphCypherQAChain` has no pre-exec hook).
 | 5   | `id()` used in relationship Cypher (`prep.ipynb`)                                        | deprecation warnings; use `elementId()`   |
 | 6   | Secrets (Gemini key, Neo4j password) appeared in a chat transcript                       | rotate when convenient                    |
 | 7   | Full Harry Potter corpus (7 books, `chunk_size=2000`) is large enough to hit the Gemini free-tier's **daily** embed quota (1000 requests/day), not just RPM/TPM | initial ingestion embedding can take multiple days to fully complete on the free tier; resumable via `book_filter` + the `textEmbedding IS NULL` check, so partial progress is never lost |
+| 8   | `normalize_entities.py` only checks the top 400 most-connected `Entity` nodes for alias duplicates | rare/low-mention aliases (e.g. `"Harry's dad"` instead of `"James Potter"`) can still slip through; re-run with a higher `limit` if more turn up |
+| 9   | Entity extraction occasionally returns malformed JSON for a batch (LLM output truncation) | caught by the same generic retry/backoff loop as API errors, so it self-heals on retry, but a batch is fully redone rather than partially salvaged |
 All items from the previous pass are resolved — see below.
 
 Auth, call timeouts, Gemini-side error masking, audit logging, and forcing

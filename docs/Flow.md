@@ -13,7 +13,9 @@ flowchart LR
     B --> C[write nodes<br/>Book / Section / Chunk]
     C --> D[connect nodes<br/>with relationships]
     D --> E[embed each chunk<br/>with Gemini]
-    E --> F[(Neo4j)]
+    E --> F[extract entities +<br/>relationships per chunk]
+    F --> G[normalize relationship<br/>types and entity aliases]
+    G --> H[(Neo4j)]
 ```
 
 ### What happens at each step
@@ -27,6 +29,9 @@ flowchart LR
 | 4 | Connect nodes | `create_relationship` (`KG/kg.py`) | Cypher `MATCH … MERGE` | `Section→Chunk`, `Book→Section` |
 | 5a | Create vector index | `create_vector_index` (`KG/kg.py`) | Neo4j `CREATE VECTOR INDEX` | name `Chunk`, on `n.textEmbedding`, **768 dims, cosine** |
 | 5b | Embed chunks | `embed_text` (`KG/kg.py`) | **Gemini `gemini-embedding-001`** via `google-genai` | task `RETRIEVAL_DOCUMENT`, **768 dims**, L2-normalized, batched 64, run per-book (`book_filter=name`) for visible progress; backoff on 429 honouring `retryDelay`; written with `db.create.setNodeVectorProperty` |
+| 6 | Extract entities + relationships | `extract_entities` (`KG/entities.py`) | **Gemini `gemini-3.5-flash-lite`** via `google-genai`, `response_mime_type="application/json"` | batched 15 chunks/call, asks for characters/places/spells/etc. + relations per chunk; MERGEs `Entity` nodes, `MENTIONED_IN` edges, and dynamic-type edges (`FRIEND_OF`, `TEACHES`, ...) between entities; marks each chunk `entitiesExtracted=true` to make re-runs resumable |
+| 7 | Normalize relationship types | `normalize_relationships` (`KG/normalize_relationships.py`) | Gemini, one call | collapses near-duplicate relationship types (`OWNS`/`OWNER_OF`/`OWNED_BY`/`POSSESSES` → `OWNS`) via a single canonical-mapping call, then rewrites edges |
+| 8 | Normalize entity aliases | `normalize_entities` (`KG/normalize_entities.py`) | Gemini, one call | merges alias variants of the same entity (top 400 most-connected) into one canonical `Entity` node, redirecting all its relationships |
 
 Connection: `load_neo4j_graph()` (`KG/config.py`) → Neo4j Aura, database `3663f87a`.
 
@@ -164,11 +169,14 @@ def generate_cypher_query(question, graph):
 | Ask this way | Use | Why |
 |---|---|---|
 | "What is the Mirror of Erised?" (facts in prose) | **Vector RAG** | searches the actual chunk text |
-| "Which book does Harry fight a basilisk in?" (structure) | **Graph RAG** | runs a real query over the graph |
+| "Who are Ron Weasley's friends?" / "Who is Harry Potter's enemy?" (relational) | **Graph RAG** | runs real Cypher over `Entity` nodes + relationships (e.g. `FRIEND_OF`, `ENEMY_OF`) |
+| "Which book does Harry fight a basilisk in?" (structure) | **Graph RAG** | runs a real query over `Book`/`Section`/`Chunk` |
 
-Vector RAG sees anything written in the text (even characters/events with no
-node, since only `Book` nodes exist). Graph RAG only knows the nodes you
-built, but its answers are exact.
+Vector RAG sees anything written in the text. Graph RAG only knows the nodes
+you built, but its answers are exact — and since `KG/entities.py` populated
+real `Entity` nodes and relationships (§1, steps 6-8), Graph RAG can now
+answer character/relationship questions it couldn't before, not just
+book/chapter-structure ones.
 The planned next step is to run both and feed both results into one final prompt.
 
 ---

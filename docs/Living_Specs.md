@@ -3,7 +3,7 @@
 > A "living" spec: it describes the system **as it is today**, not a frozen plan.
 > Update it whenever behaviour, schema, or the stack changes.
 
-Last updated: 2026-09-17
+Last updated: 2026-09-18
 
 ---
 
@@ -51,11 +51,22 @@ KG/
                  asks Gemini to pull characters/places/spells/etc. + relationships
                  out of each Chunk's text, MERGEs them as :Entity nodes linked to
                  their source Chunk via :MENTIONED_IN, with dynamic relationship
-                 types between entities (e.g. :FRIEND_OF, :TEACHES)
+                 types between entities (e.g. :FRIEND_OF, :TEACHES).
+                 Also: extract_relationships_for_category(graph, api_key, category,
+                 flag_property, book_filter) -> generic, reusable targeted
+                 extraction for one relationship category (e.g. family relations);
+                 unlike extract_entities, records r.sourceChunk on every edge so
+                 it can be verified against real evidence later. MERGE-only,
+                 never deletes.
   normalize_relationships.py  normalize_relationships(graph, api_key) -> one-time
                  pass that asks Gemini to collapse near-duplicate relationship
                  types (e.g. OWNS/OWNER_OF/OWNED_BY/POSSESSES) into one canonical
-                 type each, then rewrites the graph's edges accordingly
+                 type each, then rewrites the graph's edges accordingly.
+                 Also: verify_relationships_with_source(graph, api_key, rel_types)
+                 - the SAFE grounded verification pass, checks each edge's own
+                 r.sourceChunk against real text. verify_relationships (no
+                 _with_source) is DEPRECATED/UNSAFE - see Living_Specs.md §8
+                 item 10 - do not use it.
   normalize_entities.py  normalize_entities(graph, api_key, limit) -> one-time
                  pass that merges alias duplicates of the same entity (e.g.
                  "Harry" + "Harry Potter") into one canonical :Entity node,
@@ -170,13 +181,39 @@ including what is **not** implemented yet, lives in **[Guardrails.md](Guardrails
    alias variants of the same entity (e.g. "Harry" / "Harry Potter") under one
    canonical name, then redirects every relationship (any type, any direction)
    from each alias onto the canonical node and deletes the alias.
+10. `extract_relationships_for_category` (`KG/entities.py`), run per-book for a
+    targeted category (e.g. family relationships): re-scans every `Chunk`
+    directly and, unlike step 7, records a `sourceChunk` property on every
+    created edge — so later checks can verify against the *real* originating
+    text instead of guessing. **Purely additive (`MERGE` only, never
+    `DELETE`)** — safe to re-run, safe to interrupt. Marks chunks with a
+    caller-supplied `flag_property` for resumability.
+11. `verify_relationships_with_source` (`KG/normalize_relationships.py`), run
+    once per relationship category after step 10: reads each edge's own
+    `r.sourceChunk`, feeds that real passage to Gemini, and confirms,
+    redirects, or deletes the edge based on that evidence. Edges with no
+    `sourceChunk` (created before step 10 existed) are left completely
+    untouched. **This does delete edges it can't confirm** — see §8 for the
+    incident this replaced and why deletion here is scoped per-edge (matched
+    by its own `sourceChunk`), not per name-pair.
 
 Re-running steps 1-6 is safe: nodes MERGE on keys, embeddings skip
 already-filled nodes — but **do not re-run the `wipe_graph` cell** after
 embedding progress has started, or it erases everything embedded so far.
 Steps 7-9 are also safe to re-run (idempotent MERGEs), but 8 and 9 are meant
 to run once each, after extraction is fully done — running them mid-extraction
-would only normalize a partial graph.
+would only normalize a partial graph. Step 11 is the only step in this whole
+pipeline that deletes graph data based on an LLM's judgment rather than a
+fixed key — treat it with the same caution as `wipe_graph`.
+
+**A deprecated, unsafe function exists in `KG/normalize_relationships.py`:
+`verify_relationships` (without `_with_source`).** It grounds its check in an
+*arbitrary* chunk where both entities happen to co-occur, not the chunk that
+actually produced the claim — this caused a real data-loss incident (see §8,
+item 10) where ~66% of edges were wrongly deleted because the arbitrary
+grounding chunk didn't happen to restate the fact. **Do not use it.** It's
+kept in the file only as a cautionary reference; `verify_relationships_with_source`
+is the safe replacement.
 
 ---
 
@@ -188,8 +225,8 @@ would only normalize a partial graph.
 question
   -> _validate_and_sanitize_question         # reject empty / >300 chars / strip \r\n\t
   -> Neo4jVector.from_existing_graph (Gemini query-embedding, 768d)
-  -> retriever.invoke(question)               # top k=3 chunks by cosine (capped for cost)
-  -> stuff chunk text into <context>, truncate to 3500 chars
+  -> retriever.invoke(question)               # top k=6 chunks by cosine (capped for cost)
+  -> stuff chunk text into <context>, truncate to 8000 chars
   -> ChatPromptTemplate (<user_input> tag marks it untrusted) | gemini-3.5-flash-lite | StrOutputParser
   -> answer (wrapped to 60 cols)
 
@@ -205,13 +242,23 @@ Answers strictly from retrieved chunk text ("say you don't know" otherwise).
 ```
 question
   -> _validate_and_sanitize_question         # reject empty / >300 chars / strip \r\n\t
-  -> _entity_name_catalog(graph)              # real Person/Event names, used as allow-list
+  -> _entity_name_catalog(graph)              # real Person/Event/Book names, used as allow-list
   -> PromptTemplate(schema, question wrapped in <user_question>, entity_names, few-shot examples)
   -> GraphCypherQAChain.from_llm(gemini-3.5-flash-lite, allow_dangerous_requests=True)
        -> graph.query wrapped: _enforce_readonly_cypher, _ensure_cypher_limit
        -> LLM writes Cypher -> guarded run on graph -> LLM summarizes rows
   -> answer (wrapped to 60 cols)
 ```
+
+`Entity` names are **not** in the allow-list (too many to usefully enumerate), so the
+Cypher prompt instead tells the LLM to match them with a case-insensitive
+`CONTAINS` rather than exact equality (e.g. `WHERE toLower(e.name) CONTAINS
+toLower("Ron")`), since questions rarely use the full stored name verbatim.
+The prompt also explicitly tells the LLM to check **both** `PARENT_OF` and
+`CHILD_OF` directions for any parent/child/son/daughter question (via `UNION`)
+— extraction and normalization left the same real-world fact sometimes stored
+under either type depending on the pair, so querying only one direction
+silently misses results.
 
 `daily_limiter.check_and_increment()` runs before all of the above, sharing
 the same `.daily_quota.json` counter as `VectorRAG.py`. `graph.query` is
@@ -237,6 +284,11 @@ needed (`GraphCypherQAChain` has no pre-exec hook).
 | 7   | Full Harry Potter corpus (7 books, `chunk_size=2000`) is large enough to hit the Gemini free-tier's **daily** embed quota (1000 requests/day), not just RPM/TPM | initial ingestion embedding can take multiple days to fully complete on the free tier; resumable via `book_filter` + the `textEmbedding IS NULL` check, so partial progress is never lost |
 | 8   | `normalize_entities.py` only checks the top 400 most-connected `Entity` nodes for alias duplicates | rare/low-mention aliases (e.g. `"Harry's dad"` instead of `"James Potter"`) can still slip through; re-run with a higher `limit` if more turn up |
 | 9   | Entity extraction occasionally returns malformed JSON for a batch (LLM output truncation) | caught by the same generic retry/backoff loop as API errors, so it self-heals on retry, but a batch is fully redone rather than partially salvaged |
+| 10  | **Incident:** the deprecated `verify_relationships` (grounds checks in an arbitrary co-mention chunk, not the real source) was run on 105 `PARENT_OF`/`CHILD_OF` edges and wrongly deleted 69 of them (~66%) — no backup existed, so they were unrecoverable | replaced by `verify_relationships_with_source`, which only checks edges with a real `r.sourceChunk` and deletes with per-edge precision; lost family edges were regenerated via `extract_relationships_for_category`. **Lesson: never run an LLM-driven `DELETE` pass without confirming a backup first** |
+| 11  | No `gender` (or any attribute beyond `type`) is captured on `Entity` nodes | Graph RAG can't reliably filter "sons" vs "daughters" — it either returns all children regardless of sex, or gets lucky/unlucky based on whether the summarizing LLM happens to recall the character's gender from training data |
+| 12  | Two different characters can share the exact same name in-universe (e.g. Tom Riddle Sr./Jr. — Jr. being Voldemort; Barty Crouch Sr./Jr.) | entity extraction has no disambiguation for this, so both collapse into one `Entity` node; produced literal self-loops (`X PARENT_OF X`) that had to be deleted, leaving those specific parent/child facts permanently unanswerable via Graph RAG (Vector RAG still handles them from raw text) |
+| 13  | `verify_relationships_with_source`'s conservative grounding (only confirms what a single ~2000-char chunk states outright) has real recall loss | some genuinely true relationships (e.g. several of Arthur Weasley's other children) were dropped because their specific `sourceChunk` didn't restate the name explicitly; re-running `extract_relationships_for_category` can recover them |
+| 14  | `GraphRAG.py`'s Cypher prompt now instructs checking both `PARENT_OF` and `CHILD_OF` directions for family questions, since the same fact can end up stored under either type depending on the pair | works, but is a prompt-level patch over an inconsistent underlying schema, not a real fix; a future normalization pass could collapse both into one canonical direction |
 All items from the previous pass are resolved — see below.
 
 Auth, call timeouts, Gemini-side error masking, audit logging, and forcing

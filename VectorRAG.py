@@ -93,13 +93,13 @@ def query_vector_rag(
         embedding_node_property=vector_embedding_property,
     )
 
-    # 2. Cost Guardrail: Context Window & Chunk Limiting (Strictly capped at k=3)
-    docs = vector_store.as_retriever(search_kwargs={"k": 3}).invoke(sanitized_question)
-    
-    # 3. Cost Guardrail: Context String Truncation (Max 3500 chars)
+    # 2. Cost Guardrail: Context Window & Chunk Limiting (capped at k=6)
+    docs = vector_store.as_retriever(search_kwargs={"k": 6}).invoke(sanitized_question)
+
+    # 3. Cost Guardrail: Context String Truncation (Max 8000 chars)
     context = "\n\n".join(d.page_content for d in docs)
-    if len(context) > 3500:
-        context = context[:3500] + "\n[Context truncated to save token costs]"
+    if len(context) > 8000:
+        context = context[:8000] + "\n[Context truncated to save token costs]"
 
     prompt = ChatPromptTemplate.from_messages([
         ("system",

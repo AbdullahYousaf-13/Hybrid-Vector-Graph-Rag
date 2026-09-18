@@ -80,8 +80,8 @@ flowchart LR
 | 1 | Check daily quota | `daily_limiter.check_and_increment()` (`VectorRAG.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: raises `RuntimeError` once today's request count reaches `max_rpd` (250); shared with `GraphRAG.py` and survives a kernel restart |
 | 2 | Connect to the index | `Neo4jVector.from_existing_graph` (`VectorRAG.py`) | `langchain-neo4j` | points at index `Chunk`, text prop `text`, vector prop `textEmbedding` |
 | 3 | Embed the question | same call's `embedding=` | **Gemini `gemini-embedding-001`** via `langchain-google-genai` `GoogleGenerativeAIEmbeddings` | task `RETRIEVAL_QUERY`, **768 dims** (must match the stored vectors) |
-| 4 | Find nearest chunks | `.as_retriever(search_kwargs={"k": 3}).invoke(...)` | Neo4j `db.index.vector.queryNodes` | top **3** by cosine similarity — capped at 3 (was 4) as a cost guardrail |
-| 5 | Build context | `"\n\n".join(...)`, then truncate | plain Python | **guardrail**: context string hard-capped at 3500 chars to bound the prompt sent to the LLM |
+| 4 | Find nearest chunks | `.as_retriever(search_kwargs={"k": 6}).invoke(...)` | Neo4j `db.index.vector.queryNodes` | top **6** by cosine similarity — raised from 3 once the corpus grew to 7 books, since 3 chunks × 2000 chars was already exceeding the old 3500-char context cap |
+| 5 | Build context | `"\n\n".join(...)`, then truncate | plain Python | **guardrail**: context string hard-capped at 8000 chars (raised from 3500 alongside `k`) to bound the prompt sent to the LLM |
 | 6 | Write the answer | `prompt \| llm \| StrOutputParser()` | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI`, LCEL chain | system rule: answer only from context, else "I don't know"; the human message wraps the question in `<user_input>` tags marked untrusted (**prompt-injection guardrail**); `StrOutputParser` flattens Gemini's list-shaped output; `textwrap.fill(60)` wraps it |
 
 ### The code
@@ -97,8 +97,8 @@ def query_vector_rag(question, ...):
             model="models/gemini-embedding-001",
             task_type="RETRIEVAL_QUERY", output_dimensionality=768),
         index_name="Chunk", ...)
-    chunks  = store.as_retriever(search_kwargs={"k": 3}).invoke(question) # 4  top-3 by cosine
-    context = "\n\n".join(c.page_content for c in chunks)[:3500]          # 5  capped
+    chunks  = store.as_retriever(search_kwargs={"k": 6}).invoke(question) # 4  top-6 by cosine
+    context = "\n\n".join(c.page_content for c in chunks)[:8000]          # 5  capped
 
     prompt = "...<user_input>{input}</user_input>..."                     # marks input untrusted
     chain  = prompt | ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite") | StrOutputParser()  # 6
@@ -127,7 +127,7 @@ flowchart LR
 | 0 | Validate & sanitize | `_validate_and_sanitize_question` (`GraphRAG.py`) | plain Python | **guardrail**: same rule as Vector RAG — reject empty/>300 chars, strip `\r\n\t` |
 | 1 | Check daily quota | `daily_limiter.check_and_increment()` (`GraphRAG.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: shared counter with `VectorRAG.py` — raises once today's combined count reaches `max_rpd` (250); survives a kernel restart |
 | 2 | Collect real names | `_entity_name_catalog(graph)` (`GraphRAG.py`) | Cypher `MATCH (n) WHERE n:Person OR n:Event OR n:Book` | **guardrail**: allow-list so the LLM uses e.g. `Book_1_Philosopher_s_Stone` and doesn't invent slugs |
-| 3 | Build the prompt | `PromptTemplate` (`langchain-core`) | `CYPHER_GENERATION_TEMPLATE` | fills in `{schema}` (from Neo4j), `{entity_names}`, few-shot examples, and wraps `{question}` in `<user_question>` tags marked untrusted (**prompt-injection guardrail**) |
+| 3 | Build the prompt | `PromptTemplate` (`langchain-core`) | `CYPHER_GENERATION_TEMPLATE` | fills in `{schema}` (from Neo4j), `{entity_names}`, few-shot examples, and wraps `{question}` in `<user_question>` tags marked untrusted (**prompt-injection guardrail**); also instructs `Entity` name matching via case-insensitive `CONTAINS` (not exact equality — `Entity` names aren't in the allow-list) and to check both `PARENT_OF` and `CHILD_OF` directions (via `UNION`) for any parent/child question, since the same fact can be stored under either direction |
 | 4 | Write + guarded run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`), with `graph.query` wrapped | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI` | chain internally: LLM writes Cypher → the wrapped `graph.query` runs `_enforce_readonly_cypher()` (raises on `CREATE`/`DELETE`/`SET`/etc.) then `_ensure_cypher_limit()` (adds `LIMIT 25` if missing) → the *checked* query actually executes → LLM turns rows into a sentence |
 | 5 | Format | `textwrap.fill(response["result"], 60)` | plain Python | wrap to 60 columns |
 

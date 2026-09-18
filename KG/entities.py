@@ -5,7 +5,7 @@ from tqdm import tqdm
 from google import genai
 from google.genai import types
 
-ENTITY_EXTRACTION_PROMPT = """You are extracting a knowledge graph from Harry Potter book text.
+ENTITY_EXTRACTION_PROMPT = """You are extracting a knowledge graph from {domain_description}.
 
 For each chunk below, identify:
 - entities: named characters, places, spells, magical objects, creatures, or organizations mentioned (skip generic/common nouns)
@@ -54,11 +54,15 @@ def _call_gemini_json(client, model, prompt, max_attempts=6):
             time.sleep(wait)
 
 
-def extract_entities(graph, api_key, batch_size=15, book_filter=None, model="gemini-3.5-flash-lite"):
+def extract_entities(graph, api_key, batch_size=15, book_filter=None, model="gemini-3.5-flash-lite",
+                      domain_description="this text corpus"):
     """
     Reads Chunk text from Neo4j, asks Gemini to extract entities + relationships
     per chunk, and MERGEs the results into the graph as :Entity nodes linked to
     their source Chunk via :MENTIONED_IN, with typed relationships between entities.
+    `domain_description` is a short phrase describing the corpus (e.g. "Harry Potter
+    book text", "internal legal contracts") — keeps the prompt dataset-agnostic
+    instead of hardcoding one corpus's name.
     """
     client = genai.Client(api_key=api_key)
 
@@ -74,7 +78,7 @@ def extract_entities(graph, api_key, batch_size=15, book_filter=None, model="gem
         chunks_block = "\n\n".join(
             f'[{c["chunkId"]}]\n{c["text"]}' for c in batch
         )
-        prompt = ENTITY_EXTRACTION_PROMPT.format(chunks_block=chunks_block)
+        prompt = ENTITY_EXTRACTION_PROMPT.format(domain_description=domain_description, chunks_block=chunks_block)
 
         results = _call_gemini_json(client, model, prompt)
 
@@ -119,8 +123,8 @@ def extract_entities(graph, api_key, batch_size=15, book_filter=None, model="gem
     print("Finished entity extraction.")
 
 
-RELATIONSHIP_CATEGORY_PROMPT = """You are extracting specific relationships from book text, tracking exactly
-which chunk of text supports each fact.
+RELATIONSHIP_CATEGORY_PROMPT = """You are extracting specific relationships from {domain_description}, tracking
+exactly which chunk of text supports each fact.
 
 For each chunk below, find only relationships matching this category: {category}
 
@@ -144,7 +148,8 @@ Chunks:
 
 def extract_relationships_for_category(graph, api_key, category, flag_property,
                                         batch_size=25, book_filter=None,
-                                        model="gemini-3.5-flash-lite"):
+                                        model="gemini-3.5-flash-lite",
+                                        domain_description="this text corpus"):
     """
     Targeted, purely additive relationship extraction for one specific category (e.g. "family
     relationships such as parent, child, sibling, spouse"). Scans Chunk text directly and, unlike
@@ -152,6 +157,7 @@ def extract_relationships_for_category(graph, api_key, category, flag_property,
     can be verified/audited later against real evidence instead of an arbitrary shared chunk.
     Only ever MERGEs — never deletes or overwrites anything existing. `flag_property` marks
     processed chunks (e.g. "familyExtracted") so re-running only covers what's left.
+    `domain_description` describes the corpus, same purpose as in extract_entities.
     """
     client = genai.Client(api_key=api_key)
 
@@ -167,7 +173,9 @@ def extract_relationships_for_category(graph, api_key, category, flag_property,
     for i in tqdm(range(0, len(chunks), batch_size), desc="Extracting", ncols=100):
         batch = chunks[i:i + batch_size]
         chunks_block = "\n\n".join(f'[{c["chunkId"]}]\n{c["text"]}' for c in batch)
-        prompt = RELATIONSHIP_CATEGORY_PROMPT.format(category=category, chunks_block=chunks_block)
+        prompt = RELATIONSHIP_CATEGORY_PROMPT.format(
+            domain_description=domain_description, category=category, chunks_block=chunks_block
+        )
 
         results = _call_gemini_json(client, model, prompt)
 

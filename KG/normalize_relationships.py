@@ -5,7 +5,7 @@ from google.genai import types
 
 STRUCTURAL_TYPES = {"HAS_SECTION", "HAS_CHUNK", "MENTIONED_IN"}
 
-MAPPING_PROMPT = """You are cleaning up a knowledge graph's relationship types extracted from Harry Potter book text.
+MAPPING_PROMPT = """You are cleaning up a knowledge graph's relationship types extracted from {domain_description}.
 
 Below is a list of relationship type names currently used in the graph, with how many times each appears.
 Many of these mean the same thing but were named inconsistently (e.g. OWNS, OWNER_OF, OWNED_BY, POSSESSES all mean ownership).
@@ -35,10 +35,10 @@ def get_relationship_counts(graph, exclude=STRUCTURAL_TYPES):
     return [row for row in rows if row["relType"] not in exclude]
 
 
-def build_canonical_mapping(api_key, rel_counts, model="gemini-3.5-flash-lite"):
+def build_canonical_mapping(api_key, rel_counts, model="gemini-3.5-flash-lite", domain_description="this text corpus"):
     client = genai.Client(api_key=api_key)
     rel_list = "\n".join(f'{r["relType"]}: {r["count"]}' for r in rel_counts)
-    prompt = MAPPING_PROMPT.format(rel_list=rel_list)
+    prompt = MAPPING_PROMPT.format(domain_description=domain_description, rel_list=rel_list)
 
     resp = client.models.generate_content(
         model=model,
@@ -73,10 +73,10 @@ def apply_mapping(graph, mapping):
     print(f"Rewrote {changed} relationship types to their canonical form.")
 
 
-def normalize_relationships(graph, api_key):
+def normalize_relationships(graph, api_key, domain_description="this text corpus"):
     rel_counts = get_relationship_counts(graph)
     print(f"Found {len(rel_counts)} non-structural relationship types to normalize.")
-    mapping = build_canonical_mapping(api_key, rel_counts)
+    mapping = build_canonical_mapping(api_key, rel_counts, domain_description=domain_description)
     apply_mapping(graph, mapping)
     return mapping
 

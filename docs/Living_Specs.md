@@ -47,19 +47,22 @@ KG/
   chunking.py    split_data_from_file(path) -> list[chunk dict]
   kg.py          create_nodes, ingest_Chunks, create_relationship,
                  create_vector_index, embed_text
-  entities.py    extract_entities(graph, api_key, batch_size, book_filter) ->
-                 asks Gemini to pull characters/places/spells/etc. + relationships
-                 out of each Chunk's text, MERGEs them as :Entity nodes linked to
-                 their source Chunk via :MENTIONED_IN, with dynamic relationship
-                 types between entities (e.g. :FRIEND_OF, :TEACHES).
+  entities.py    extract_entities(graph, api_key, batch_size, book_filter,
+                 domain_description) -> asks Gemini to pull characters/places/
+                 spells/etc. + relationships out of each Chunk's text, MERGEs
+                 them as :Entity nodes linked to their source Chunk via
+                 :MENTIONED_IN, with dynamic relationship types between entities
+                 (e.g. :FRIEND_OF, :TEACHES). `domain_description` (default
+                 "this text corpus") describes the corpus in the prompt instead
+                 of a hardcoded name, so the same code works on any dataset.
                  Also: extract_relationships_for_category(graph, api_key, category,
-                 flag_property, book_filter) -> generic, reusable targeted
-                 extraction for one relationship category (e.g. family relations);
-                 unlike extract_entities, records r.sourceChunk on every edge so
-                 it can be verified against real evidence later. MERGE-only,
+                 flag_property, book_filter, domain_description) -> generic, reusable
+                 targeted extraction for one relationship category (e.g. family
+                 relations); unlike extract_entities, records r.sourceChunk on every
+                 edge so it can be verified against real evidence later. MERGE-only,
                  never deletes.
-  normalize_relationships.py  normalize_relationships(graph, api_key) -> one-time
-                 pass that asks Gemini to collapse near-duplicate relationship
+  normalize_relationships.py  normalize_relationships(graph, api_key, domain_description)
+                 -> one-time pass that asks Gemini to collapse near-duplicate relationship
                  types (e.g. OWNS/OWNER_OF/OWNED_BY/POSSESSES) into one canonical
                  type each, then rewrites the graph's edges accordingly.
                  Also: verify_relationships_with_source(graph, api_key, rel_types)
@@ -67,10 +70,15 @@ KG/
                  r.sourceChunk against real text. verify_relationships (no
                  _with_source) is DEPRECATED/UNSAFE - see Living_Specs.md §8
                  item 10 - do not use it.
-  normalize_entities.py  normalize_entities(graph, api_key, limit) -> one-time
-                 pass that merges alias duplicates of the same entity (e.g.
-                 "Harry" + "Harry Potter") into one canonical :Entity node,
-                 redirecting all of that node's relationships (any type/direction)
+  normalize_entities.py  normalize_entities(graph, api_key, limit, domain_description)
+                 -> one-time pass that merges alias duplicates of the same entity
+                 (e.g. "Harry" + "Harry Potter") into one canonical :Entity node,
+                 redirecting all of that node's relationships (any type/direction).
+                 Grounded: get_entity_evidence pulls a real excerpt from each
+                 entity's own MENTIONED_IN chunks, and the LLM is told to judge
+                 aliasing ONLY from that evidence — not from background/trivia
+                 knowledge of the entity's name (see §8, item 16, for why this
+                 matters on a corpus the model wasn't trained on)
 VectorRAG.py     query_vector_rag(question, index, label, text_prop, emb_prop)
                  input validation, prompt-injection isolation, retrieval/
                  context caps, daily quota tracking (see docs/Guardrails.md)
@@ -252,8 +260,16 @@ question
 
 `Entity` names are **not** in the allow-list (too many to usefully enumerate), so the
 Cypher prompt instead tells the LLM to match them with a case-insensitive
-`CONTAINS` rather than exact equality (e.g. `WHERE toLower(e.name) CONTAINS
-toLower("Ron")`), since questions rarely use the full stored name verbatim.
+`CONTAINS` rather than exact equality, since questions rarely use the full
+stored name verbatim. As of this pass, `CYPHER_GENERATION_TEMPLATE`'s
+instructions and few-shot example were rewritten to use domain-neutral
+illustrative values (e.g. a generic `"John Smith"`/`"John"` pair, placeholder
+`<name from question>`/`<matching name from the allow-list above>` markers)
+instead of literal `"Ron Weasley"`/`"Book_1_Philosopher_s_Stone"` — the
+*patterns* it teaches (Book→Section→Chunk traversal, `CONTAINS` matching,
+checking both relationship directions) are genuinely generic to this
+project's schema, but the old literal example values were specific to this
+one corpus and would have looked out of place run against different data.
 The prompt also explicitly tells the LLM to check **both** `PARENT_OF` and
 `CHILD_OF` directions for any parent/child/son/daughter question (via `UNION`)
 — extraction and normalization left the same real-world fact sometimes stored
@@ -289,6 +305,8 @@ needed (`GraphCypherQAChain` has no pre-exec hook).
 | 12  | Two different characters can share the exact same name in-universe (e.g. Tom Riddle Sr./Jr. — Jr. being Voldemort; Barty Crouch Sr./Jr.) | entity extraction has no disambiguation for this, so both collapse into one `Entity` node; produced literal self-loops (`X PARENT_OF X`) that had to be deleted, leaving those specific parent/child facts permanently unanswerable via Graph RAG (Vector RAG still handles them from raw text) |
 | 13  | `verify_relationships_with_source`'s conservative grounding (only confirms what a single ~2000-char chunk states outright) has real recall loss | some genuinely true relationships (e.g. several of Arthur Weasley's other children) were dropped because their specific `sourceChunk` didn't restate the name explicitly; re-running `extract_relationships_for_category` can recover them |
 | 14  | `GraphRAG.py`'s Cypher prompt now instructs checking both `PARENT_OF` and `CHILD_OF` directions for family questions, since the same fact can end up stored under either type depending on the pair | works, but is a prompt-level patch over an inconsistent underlying schema, not a real fix; a future normalization pass could collapse both into one canonical direction |
+| 15  | **Resolved this pass:** `KG/entities.py`, `KG/normalize_relationships.py`, and `KG/normalize_entities.py` had "Harry Potter" hardcoded as literal prompt text (not a parameter) — pointing this exact code at a different corpus would still tell Gemini it's reading Harry Potter | all three now take a `domain_description` parameter (default `"this text corpus"`); `GraphRAG.py`'s Cypher few-shot example was also rewritten to use domain-neutral placeholder values instead of literal `"Ron Weasley"`/`"Book_1_Philosopher_s_Stone"` |
+| 16  | **Resolved this pass:** `normalize_entities.py`'s alias-merging judged aliases from name/type/count alone — no source text, just the LLM's background knowledge (works for a famous franchise Gemini was trained on, unreliable for a private/obscure corpus) | `get_entity_evidence` now pulls a real excerpt from each entity's own `MENTIONED_IN` chunks, and the prompt is told to judge aliasing ONLY from that evidence — same grounding fix already applied to relationship verification (item 10), now applied consistently to entity merging too |
 All items from the previous pass are resolved — see below.
 
 Auth, call timeouts, Gemini-side error masking, audit logging, and forcing

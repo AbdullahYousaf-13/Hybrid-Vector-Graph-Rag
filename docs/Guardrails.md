@@ -1,14 +1,15 @@
 # Guardrails
 
-Last updated: 2026-09-16
+Last updated: 2026-09-21
 
 ## Security guardrails — added
 
 | Guardrail | Where | Why |
 |---|---|---|
-| Input validation | `GraphRAG.py`, `VectorRAG.py` | reject empty questions and anything over 300 chars; strip `\r\n\t` so a question can't fake new prompt lines |
-| Prompt-injection isolation | `GraphRAG.py`, `VectorRAG.py` | user question wrapped in `<user_question>`/`<user_input>` tags + told to the LLM as untrusted data, so it can't be read as an instruction |
-| Entity-name allow-list | `GraphRAG.py` | LLM must match `.name` only against real Person/Event/Book names pulled from the graph, so it can't hallucinate a fake node to query |
+| Input validation | `GraphRAG.py`, `VectorRAG.py`, `HybridRAG.py` | reject empty questions and anything over 300 chars; strip `\r\n\t` so a question can't fake new prompt lines |
+| Prompt-injection isolation | `GraphRAG.py`, `VectorRAG.py`, `HybridRAG.py` | user question wrapped in `<user_question>`/`<user_input>` tags + told to the LLM as untrusted data, so it can't be read as an instruction. `HybridRAG.py` extends this to the *answers themselves* — each side's answer is wrapped in its own `<text_search_answer>`/`<knowledge_graph_answer>` tag before the synthesis call, since either may echo corpus text |
+| Entity-name allow-list | `GraphRAG.py` | LLM must match `Person`/`Event`/`Book` `.name` only against real values pulled from the graph, so it can't hallucinate a fake node to query. `Entity` nodes are deliberately excluded (too many to enumerate) — instead the prompt requires case-insensitive `CONTAINS` matching for those |
+| Answer-relevance check before responding | `GraphRAG.py` (`qa_prompt`/`QA_TEMPLATE`) | `GraphCypherQAChain`'s *default* QA prompt only says "say you don't know if results are empty" — a non-empty but irrelevant `CONTAINS` match was getting reported as if it answered the question. `QA_TEMPLATE` requires the LLM to verify the returned rows actually, specifically answer the question first |
 | Error / secret masking | `KG/config.py` | real Neo4j connection error (can contain URI/creds) is logged locally only; caller gets a generic message |
 | Read-only enforcement on generated Cypher | `GraphRAG.py` | `graph.query` is wrapped for the duration of each call; `_enforce_readonly_cypher()` rejects any generated query containing `CREATE`/`DELETE`/`SET`/`DROP`/`MERGE`/`REMOVE`/`DETACH`/`ALTER` before it reaches Neo4j — closes the gap `allow_dangerous_requests=True` otherwise leaves open |
 
@@ -16,11 +17,12 @@ Last updated: 2026-09-16
 
 | Guardrail | Where | Why |
 |---|---|---|
-| Retrieval cap `k=3` | `VectorRAG.py` | fewer chunks fetched per question = smaller prompt |
-| Context truncation (3500 chars) | `VectorRAG.py` | caps how much chunk text gets sent to the LLM |
-| Shared persistent daily quota (`max_rpd=250`, backed by `.daily_quota.json`) | `GraphRAG.py`, `VectorRAG.py` | one counter, read/written by both files, keyed by date — survives a kernel restart and can't be doubled by alternating between the two RAG paths. `.daily_quota.json` is gitignored (it's runtime state, not source) |
-| Cheaper model `gemini-3.5-flash-lite` | `GraphRAG.py`, `VectorRAG.py` | lower cost/latency per call than the previous flash model |
+| Retrieval cap `k=6` | `VectorRAG.py` | fewer chunks fetched per question = smaller prompt (raised from `k=3` once the corpus grew to 7 books) |
+| Context truncation (8000 chars) | `VectorRAG.py` | caps how much chunk text gets sent to the LLM (raised from 3500 alongside `k`) |
+| Shared persistent daily quota (`max_rpd=250`, backed by `.daily_quota.json`) | `GraphRAG.py`, `VectorRAG.py`, `HybridRAG.py` | one counter, read/written by all three files, keyed by date — survives a kernel restart and can't be doubled by alternating between paths. `.daily_quota.json` is gitignored (it's runtime state, not source). **A single `query_hybrid_rag` call can cost up to 3 of the shared budget** (one per delegated call, plus one for its own synthesis call) — a real, non-trivial increase in quota pressure worth knowing about |
+| Cheaper model `gemini-3.5-flash-lite` | `GraphRAG.py`, `VectorRAG.py`, `HybridRAG.py` | lower cost/latency per call than the previous flash model |
 | Row limit on generated Cypher | `GraphRAG.py` | same `graph.query` wrapper appends `LIMIT 25` via `_ensure_cypher_limit()` when the generated query has none, so an unbounded `MATCH (n) RETURN n` can't pull the whole graph into the summarization prompt |
+| Skip synthesis on partial failure | `HybridRAG.py` | if only one of the two delegated calls succeeds, `query_hybrid_rag` returns that answer directly instead of spending a 3rd quota request reconciling a real answer against nothing |
 
 ### How the read-only + row-limit wrapper works
 
@@ -48,4 +50,4 @@ others to call. Revisit if that changes.
 | Timeouts on LLM/DB calls | no concurrent/untrusted callers to protect against a hang |
 | Gemini-side error masking | errors only ever surface to you locally, not to another user |
 | Audit log of question → Cypher → result | no abuse surface to review; you're the only caller |
-| Forcing Graph RAG to answer biographical/relational questions (e.g. "who is X's father") via chunk text | not a graph fact — `RELATED_TO` carries no semantic meaning, so this is a data-model gap, not something a guardrail or prompt patch should paper over. Those questions belong to Vector RAG, which already answers them correctly. See Living_Specs.md known limitation #2 |
+~~Forcing Graph RAG to answer biographical/relational questions via chunk text~~ | **No longer applicable** — this was true when the corpus only had blanket, meaningless `RELATED_TO` edges (historical, pre-`Entity` work). Since `KG/entities.py` populated real `Entity` nodes and typed relationships (`FRIEND_OF`, `PARENT_OF`, etc.), Graph RAG genuinely does answer these questions now — see Living_Specs.md §7 and the known-limitations items in the 10-18 range for what's still imperfect about that data, which is a different (and real) set of concerns, not "this class of question is out of scope" |

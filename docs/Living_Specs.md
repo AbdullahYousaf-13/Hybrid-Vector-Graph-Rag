@@ -3,7 +3,7 @@
 > A "living" spec: it describes the system **as it is today**, not a frozen plan.
 > Update it whenever behaviour, schema, or the stack changes.
 
-Last updated: 2026-09-18
+Last updated: 2026-09-21
 
 ---
 
@@ -86,6 +86,12 @@ GraphRAG.py      generate_cypher_query(question, graph)
                  input validation, prompt-injection isolation, entity-name
                  allow-list, daily quota tracking, read-only + row-limit
                  enforcement on generated Cypher (via a graph.query wrapper)
+HybridRAG.py     query_hybrid_rag(question, graph, vector_index_name, vector_node_label,
+                 vector_source_property, vector_embedding_property, domain_description)
+                 -> calls query_vector_rag and generate_cypher_query UNMODIFIED, then
+                 reconciles their two answers with a third gemini-3.5-flash-lite call;
+                 degrades to a partial answer if only one source succeeds, raises only if
+                 both fail; shares the same .daily_quota.json (up to 3 requests/call)
 prep.ipynb       one-time ingestion pipeline (§6)
 main.ipynb       query entry point (§7)
 KG/csv_to_json.py  one-off converter: data/harry_potter_books.csv -> data/Book_*.json
@@ -285,6 +291,51 @@ right before it reaches Neo4j, then the original method is restored in a
 `finally` block. See [Guardrails.md](Guardrails.md) for why this shape was
 needed (`GraphCypherQAChain` has no pre-exec hook).
 
+`GraphCypherQAChain` also takes a `qa_prompt` (`QA_TEMPLATE`) — the step that
+turns raw Cypher result rows into a sentence. LangChain's *default* QA prompt
+only says "say you don't know if the results are empty," so a non-empty but
+irrelevant result (e.g. a `CONTAINS` match that hit an unrelated fact) got
+reported as if it answered the question. `QA_TEMPLATE` replaces that with an
+explicit instruction to verify the rows actually, specifically answer the
+question before answering, and to say "I don't know" otherwise — the same
+honesty guardrail `VectorRAG.py`'s system prompt already had, now applied here
+too.
+
+### `query_hybrid_rag` (`HybridRAG.py`)
+
+```
+question
+  -> _validate_and_sanitize_question
+  -> query_vector_rag(...) [try/except]     # unmodified call into VectorRAG.py
+  -> generate_cypher_query(...) [try/except] # unmodified call into GraphRAG.py
+  -> both failed?  -> raise combined error
+  -> only one succeeded? -> return it directly, prefixed "(<other> unavailable — ...)"
+  -> both succeeded -> HYBRID_SYNTHESIS_TEMPLATE | gemini-3.5-flash-lite | StrOutputParser
+       -> synthesis itself fails? -> fall back to showing both raw answers
+  -> answer (wrapped to 60 cols)
+```
+
+Deliberately treats `VectorRAG.py` and `GraphRAG.py` as black boxes — it never
+touches their internals, only imports and calls their existing public
+functions, so both remain fully independent and usable exactly as before (see
+`main.ipynb` cells 2 and 3). The synthesis prompt wraps each side's answer in
+its own `<text_search_answer>`/`<knowledge_graph_answer>` tag (extending this
+project's existing untrusted-data-tagging convention to the answers
+themselves) and gives explicit branching rules: if both agree, combine them;
+if one declines and the other answers, use the real answer without mentioning
+the other's failure; if they conflict, say so explicitly rather than silently
+picking one; if both decline, say the answer couldn't be found. This reuses
+the "don't guess" honesty rule already established in both existing paths'
+prompts, not a new invented one.
+
+**Quota:** `query_vector_rag` and `generate_cypher_query` each already
+increment the shared `.daily_quota.json` counter once internally; the
+synthesis step increments it a third time, immediately before its own LLM
+call (not at the top of `query_hybrid_rag`), so a quota hit there still
+preserves whichever partial answer(s) were already gathered. **One hybrid
+call can cost up to 3 of the shared 250/day budget** — a real, non-trivial
+increase in quota pressure worth knowing about.
+
 ---
 
 ## 8. Known limitations / tech debt
@@ -293,7 +344,7 @@ needed (`GraphCypherQAChain` has no pre-exec hook).
 | --- | ------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | 1   | `RELATED_TO` (historical, Napoleon corpus) was created in both directions                | n/a for current `Book` corpus — no `RELATED_TO` edges exist now |
 | 2   | `Person↔Person` / `Person↔Event` blanket edges (historical)                              | not used by the `Book` corpus; no `Book↔Book` equivalent exists |
-| 3   | `main.ipynb` calls the two retrievers separately                                         | not a true hybrid answer                  |
+| 3   | **Resolved:** `main.ipynb` used to call the two retrievers separately with no combined answer | `HybridRAG.py`'s `query_hybrid_rag` now calls both and synthesizes one answer (see §7) — `main.ipynb` cell 4 |
 | 4   | No `requirements.txt` / lockfile                                                         | environment not reproducible              |
 | 5   | `id()` used in relationship Cypher (`prep.ipynb`)                                        | deprecation warnings; use `elementId()`   |
 | 6   | Secrets (Gemini key, Neo4j password) appeared in a chat transcript                       | rotate when convenient                    |
@@ -307,6 +358,8 @@ needed (`GraphCypherQAChain` has no pre-exec hook).
 | 14  | `GraphRAG.py`'s Cypher prompt now instructs checking both `PARENT_OF` and `CHILD_OF` directions for family questions, since the same fact can end up stored under either type depending on the pair | works, but is a prompt-level patch over an inconsistent underlying schema, not a real fix; a future normalization pass could collapse both into one canonical direction |
 | 15  | **Resolved this pass:** `KG/entities.py`, `KG/normalize_relationships.py`, and `KG/normalize_entities.py` had "Harry Potter" hardcoded as literal prompt text (not a parameter) — pointing this exact code at a different corpus would still tell Gemini it's reading Harry Potter | all three now take a `domain_description` parameter (default `"this text corpus"`); `GraphRAG.py`'s Cypher few-shot example was also rewritten to use domain-neutral placeholder values instead of literal `"Ron Weasley"`/`"Book_1_Philosopher_s_Stone"` |
 | 16  | **Resolved this pass:** `normalize_entities.py`'s alias-merging judged aliases from name/type/count alone — no source text, just the LLM's background knowledge (works for a famous franchise Gemini was trained on, unreliable for a private/obscure corpus) | `get_entity_evidence` now pulls a real excerpt from each entity's own `MENTIONED_IN` chunks, and the prompt is told to judge aliasing ONLY from that evidence — same grounding fix already applied to relationship verification (item 10), now applied consistently to entity merging too |
+| 17  | `query_hybrid_rag` can cost up to 3 of the shared 250/day quota per call (vs. 1 for a single-path call) | on a corpus large enough to need many questions per day, hybrid usage will exhaust the shared daily budget noticeably faster than using either path alone |
+| 18  | Hybrid synthesis judges agreement/conflict/decline from two **finished text answers**, not from either side's raw evidence | if one side's answer is subtly wrong but not an obvious "I don't know," the synthesis step has no way to independently verify it against source text — it can only compare two opinions, not fact-check either one |
 All items from the previous pass are resolved — see below.
 
 Auth, call timeouts, Gemini-side error masking, audit logging, and forcing
@@ -327,7 +380,7 @@ wired in via a `graph.query` wrapper (previously defined but dead code).
 
 ## 9. Roadmap
 
-- [ ] Merge vector + graph context into a single hybrid prompt in `main.ipynb`.
+- [x] Merge vector + graph context into a single hybrid prompt in `main.ipynb` — `HybridRAG.py`, see §7.
 - [ ] Derive `RELATED_TO` from co-occurrence in chunk text instead of all-pairs.
 - [ ] Single-direction relationships + `elementId()`.
 - [ ] `requirements.txt` (langchain, langchain-neo4j, langchain-google-genai, langchain-text-splitters, neo4j, python-dotenv, tqdm, numpy).

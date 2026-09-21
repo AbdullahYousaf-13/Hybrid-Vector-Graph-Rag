@@ -164,20 +164,97 @@ def generate_cypher_query(question, graph):
 
 ---
 
-## 4. Which one to use
+## 4. Hybrid RAG — combine both answers
+
+```mermaid
+flowchart LR
+    Q[question] --> VR[Vector RAG]
+    Q --> GR[Graph RAG]
+    VR --> S{both succeeded?}
+    GR --> S
+    S -->|both| M[Gemini reconciles<br/>the two answers]
+    S -->|one only| P[return that<br/>answer directly]
+    S -->|neither| X[raise combined error]
+```
+
+### What happens at each step
+
+| # | Step | Where | Tool used | Details |
+|---|------|-------|-----------|---------|
+| 0 | Validate & sanitize | `_validate_and_sanitize_question` (`HybridRAG.py`) | plain Python | same rule as the other two paths |
+| 1 | Call both paths | `query_vector_rag(...)`, `generate_cypher_query(...)` | unmodified imports from `VectorRAG.py`/`GraphRAG.py` | each wrapped in its own `try/except` — neither path's code is touched |
+| 2 | Handle partial failure | plain Python | if only one succeeded, return it directly (prefixed `"(<other> unavailable — ...)"`) and skip synthesis entirely — no need to spend a 3rd quota request reconciling one real answer against nothing |
+| 3 | Reconcile | `HYBRID_SYNTHESIS_TEMPLATE` | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI`, LCEL chain | only runs if both succeeded; each answer wrapped in its own `<text_search_answer>`/`<knowledge_graph_answer>` untrusted-data tag; explicit rules for agree / one-declines / conflict / both-decline (see below) |
+| 4 | Format | `textwrap.fill(result, 60)` | plain Python | same convention as the other two paths |
+
+`query_vector_rag` and `generate_cypher_query` each already increment the
+shared `.daily_quota.json` counter once internally; the synthesis step
+increments it a third time, right before its own LLM call — **one hybrid
+call can cost up to 3 of the shared 250/day budget.**
+
+### The four synthesis outcomes
+
+| Situation | What the prompt tells Gemini to do |
+|---|---|
+| Both answers agree | Synthesize one concise combined answer, using complementary detail from each — don't just repeat one verbatim, don't invent anything neither stated |
+| One declines, one has a real answer | Use the real answer; don't mention that the other path failed to answer |
+| The two answers conflict | Say so explicitly — state what each source claims, don't silently pick one as correct |
+| Both decline | Say plainly the answer couldn't be found — don't fabricate |
+
+This reuses the "don't guess, say you don't know" honesty rule already built
+into both `VectorRAG.py`'s system prompt and `GraphRAG.py`'s `QA_TEMPLATE`,
+rather than inventing a new one.
+
+### The code
+
+```python
+# HybridRAG.py, simplified
+def query_hybrid_rag(question, graph, ...):
+    question = _validate_and_sanitize_question(question)
+
+    try:
+        vector_answer = query_vector_rag(question, ...)          # 1, unmodified
+    except Exception as e:
+        vector_answer, vector_error = None, e
+
+    try:
+        graph_answer = generate_cypher_query(question, graph)    # 1, unmodified
+    except Exception as e:
+        graph_answer, graph_error = None, e
+
+    if vector_answer is None and graph_answer is None:            # 2
+        raise RuntimeError(f"Hybrid RAG Error: both retrieval paths failed. ...")
+    if graph_answer is None:
+        return f"(Graph RAG unavailable — answer from Vector RAG only)\n\n{vector_answer}"
+    if vector_answer is None:
+        return f"(Vector RAG unavailable — answer from Graph RAG only)\n\n{graph_answer}"
+
+    try:
+        daily_limiter.check_and_increment()                       # 3rd quota request
+        chain = prompt | ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite") | StrOutputParser()
+        result = chain.invoke({"question": question, "vector_answer": vector_answer, "graph_answer": graph_answer})
+        return textwrap.fill(result, 60)                          # 4
+    except Exception:
+        return f"(Automatic synthesis unavailable — showing both raw answers)\n\nVector RAG: {vector_answer}\n\nGraph RAG: {graph_answer}"
+```
+
+---
+
+## 5. Which one to use
 
 | Ask this way | Use | Why |
 |---|---|---|
 | "What is the Mirror of Erised?" (facts in prose) | **Vector RAG** | searches the actual chunk text |
 | "Who are Ron Weasley's friends?" / "Who is Harry Potter's enemy?" (relational) | **Graph RAG** | runs real Cypher over `Entity` nodes + relationships (e.g. `FRIEND_OF`, `ENEMY_OF`) |
 | "Which book does Harry fight a basilisk in?" (structure) | **Graph RAG** | runs a real query over `Book`/`Section`/`Chunk` |
+| Not sure which fits, or want the most complete answer | **Hybrid RAG** | runs both and reconciles them (§4) — costs more quota, but covers each path's blind spots |
 
 Vector RAG sees anything written in the text. Graph RAG only knows the nodes
 you built, but its answers are exact — and since `KG/entities.py` populated
 real `Entity` nodes and relationships (§1, steps 6-8), Graph RAG can now
 answer character/relationship questions it couldn't before, not just
-book/chapter-structure ones.
-The planned next step is to run both and feed both results into one final prompt.
+book/chapter-structure ones. Hybrid RAG (§4) is the now-available answer to
+"why not both" — it doesn't require picking the right path upfront.
 
 ---
 
@@ -188,7 +265,7 @@ The planned next step is to run both and feed both results into one final prompt
 | Graph database | Neo4j Aura Free (db `3663f87a`) |
 | Chunking | `RecursiveCharacterTextSplitter` (2000 / 200) |
 | Embeddings | Gemini `gemini-embedding-001`, 768 dims, cosine |
-| LLM (answers + Cypher) | Gemini `gemini-3.5-flash-lite` |
+| LLM (answers + Cypher + hybrid synthesis) | Gemini `gemini-3.5-flash-lite` |
 | Orchestration | LangChain v1.4 + `langchain-neo4j` + `langchain-google-genai` |
 | Config / secrets | `python-dotenv` reading `.env`; connection errors sanitized before they leave `KG/config.py` |
 

@@ -6,3 +6,5 @@ __pycache__/
 .daily_quota.json
 backups/
 data/harry_potter_books.csv
+frontend/node_modules/
+frontend/dist/

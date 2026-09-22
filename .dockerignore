@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.env
+.daily_quota.json
+backups/
+data/
+docs/
+*.ipynb
+.ipynb_checkpoints/
+frontend/node_modules/
+frontend/dist/

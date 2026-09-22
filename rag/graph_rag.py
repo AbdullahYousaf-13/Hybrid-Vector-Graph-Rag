@@ -43,8 +43,11 @@ class PersistentDailyQuotaTracker:
         self._save_state(new_count)
         print(f"[Shared Daily Quota] Total requests used today: {new_count}/{self.max_rpd}")
 
-# Shared persistent quota instance
-daily_limiter = PersistentDailyQuotaTracker(state_file=".daily_quota.json", max_rpd=250)
+# Resolved from this file rather than the process's working directory, so the
+# counter lands in the same place no matter where the app is started from.
+QUOTA_FILE = Path(__file__).resolve().parent.parent / ".daily_quota.json"
+
+daily_limiter = PersistentDailyQuotaTracker(state_file=QUOTA_FILE, max_rpd=250)
 
 
 def _validate_and_sanitize_question(question: str) -> str:

@@ -1,20 +1,24 @@
 """
-Minimal HTTP API in front of the existing RAG pipeline.
+HTTP API in front of the RAG pipeline, which also serves the built frontend.
 
-Run from the repo root (not from backend/) so relative paths in the RAG
-modules (.env, .daily_quota.json) resolve the same way they do for main.ipynb:
+Local development (frontend runs separately on Vite, which proxies /api here):
 
     uvicorn backend.app:app --reload --port 8001
+
+In production the frontend is built to frontend/dist and served from this same
+process, so there is one origin and no CORS involved.
 """
 import sys
 import time
 import json
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from KG.config import load_neo4j_graph
@@ -24,6 +28,7 @@ from rag.hybrid_rag import query_hybrid_rag
 
 app = FastAPI()
 
+# Only needed when the Vite dev server calls this directly rather than proxying.
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"http://localhost:\d+",
@@ -33,8 +38,9 @@ app.add_middleware(
 
 graph, _, _ = load_neo4j_graph()
 
-QUOTA_FILE = Path(__file__).resolve().parent.parent / ".daily_quota.json"
+QUOTA_FILE = REPO_ROOT / ".daily_quota.json"
 QUOTA_MAX = 250
+FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
 
 class QueryRequest(BaseModel):
@@ -48,6 +54,12 @@ def _read_quota() -> dict:
         return {"used": data.get("count", 0), "max": QUOTA_MAX}
     except Exception:
         return {"used": 0, "max": QUOTA_MAX}
+
+
+@app.get("/api/health")
+def health():
+    """Cheap liveness check: no LLM call, no quota cost. Used as Render's health check."""
+    return {"status": "ok", "quota": _read_quota()}
 
 
 @app.post("/api/query")
@@ -77,3 +89,8 @@ def query(request: QueryRequest):
         raise HTTPException(status_code=429, detail=str(e))
     except Exception:
         raise HTTPException(status_code=500, detail="Internal error while answering the question.")
+
+
+# Mounted last so it never shadows /api/*. html=True serves index.html at "/".
+if FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

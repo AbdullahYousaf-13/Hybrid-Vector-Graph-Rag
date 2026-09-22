@@ -1,0 +1,31 @@
+# --- Stage 1: build the frontend -------------------------------------------
+FROM node:22-slim AS frontend
+
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+# --- Stage 2: the API, which also serves the built frontend -----------------
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY backend/requirements.txt backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+COPY backend/ backend/
+COPY rag/ rag/
+COPY KG/ KG/
+
+COPY --from=frontend /build/dist frontend/dist
+
+EXPOSE 8000
+
+# Render injects $PORT; default to 8000 so the image also runs locally as-is.
+CMD ["sh", "-c", "uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8000}"]

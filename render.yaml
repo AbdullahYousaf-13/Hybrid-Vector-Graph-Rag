@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: hogwarts-archive
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    envVars:
+      # Set these in the Render dashboard; never commit real values.
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: NEO4J_DATABASE
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

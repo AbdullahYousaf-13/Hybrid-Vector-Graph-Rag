@@ -1,4 +1,6 @@
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8001/api/query";
+// Relative by design: the API is same-origin in production (FastAPI serves
+// this bundle) and proxied to the backend by Vite in development.
+const API_URL = import.meta.env.VITE_API_URL ?? "/api/query";
 
 export class ApiError extends Error {
   constructor(message, status) {
@@ -20,7 +22,7 @@ export async function askQuestion({ question, mode, signal }) {
   } catch (cause) {
     if (cause?.name === "AbortError") throw cause;
     throw new ApiError(
-      `Could not reach the backend at ${API_URL}. Start it with: uvicorn backend.app:app --reload --port 8001`,
+      "Could not reach the backend. If you are running locally, start it with: uvicorn backend.app:app --reload --port 8001",
       0
     );
   }

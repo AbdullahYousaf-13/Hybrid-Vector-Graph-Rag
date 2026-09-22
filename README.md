@@ -22,6 +22,7 @@ docs/           Living_Specs.md (full spec), Flow.md (step-by-step + diagrams),
                 Guardrails.md (security/cost guardrails)
 main.ipynb      notebook entry point for querying (mirrors backend/app.py)
 prep.ipynb      one-time ingestion pipeline
+Dockerfile      builds the frontend, then serves it from the API (one service)
 ```
 
 ## Setup
@@ -57,6 +58,8 @@ uvicorn backend.app:app --reload --port 8001     # terminal 1, from repo root
 cd frontend && npm install && npm run dev         # terminal 2
 ```
 Open `http://localhost:5173`, pick Vector / Graph / Hybrid, and ask a question.
+Vite proxies `/api` to port 8001, so the frontend calls the same relative path
+it uses in production.
 
 **Notebook**
 Open `main.ipynb` and run the cells — it calls the same `rag/` functions the
@@ -64,6 +67,33 @@ API uses.
 
 Both paths share a single daily request quota (`.daily_quota.json`, 250/day)
 and the same security/cost guardrails — see `docs/Guardrails.md`.
+
+## Deploying (Render)
+
+One Docker web service runs everything: the image builds the frontend with Node,
+then serves `frontend/dist` from FastAPI, so there is a single origin and no CORS.
+
+1. Push to GitHub, then in Render: **New > Web Service**, pick this repo. It
+   detects the `Dockerfile`; `render.yaml` sets the plan and health check path.
+2. Add the environment variables from your `.env` (`NEO4J_URI`,
+   `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE`, `GEMINI_API_KEY`).
+   `load_dotenv()` is a no-op without a `.env` file, so the real environment is
+   used. Never commit `.env`.
+3. Health check path is `/api/health` (no LLM call, no quota cost).
+
+Run the same image locally with `docker build -t hogwarts-archive . && docker run
+-p 8000:8000 --env-file .env hogwarts-archive`.
+
+Three things to expect on the free tier:
+
+- **The service sleeps after ~15 minutes idle.** The first visit then pays a cold
+  start, and this app is slow to boot (LangChain imports plus a Neo4j connection
+  at startup) before it even begins answering.
+- **Neo4j Aura Free pauses after ~3 days of inactivity.** The deployed app will
+  error until you resume the instance from the Aura console.
+- **`.daily_quota.json` does not survive restarts** on Render's ephemeral disk, so
+  the 250/day guardrail resets whenever the service restarts. Anyone with the URL
+  spends your Gemini quota, and a hybrid question costs 3 requests.
 
 ## Using your own data
 

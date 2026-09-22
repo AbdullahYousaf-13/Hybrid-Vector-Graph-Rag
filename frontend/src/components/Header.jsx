@@ -6,16 +6,16 @@ export default function Header() {
     <header>
       <HouseRibbon className="pt-3" />
 
-      <div className="mx-auto max-w-3xl px-4 pt-10 pb-8 text-center sm:px-6 sm:pt-14">
+      <div className="mx-auto max-w-3xl px-4 pt-8 pb-8 text-center sm:px-6 sm:pt-12">
         <img
           src="/img/hogwarts-crest.webp"
           alt=""
           width="512"
           height="512"
-          className="mx-auto h-28 w-28 drop-shadow-[0_10px_24px_rgba(0,0,0,0.7)] sm:h-36 sm:w-36"
+          className="crest mx-auto h-36 w-36 sm:h-44 sm:w-44"
         />
 
-        <p className="legible mt-6 font-display text-[11px] font-semibold tracking-[0.35em] text-gold-300 uppercase">
+        <p className="legible mt-4 font-display text-[11px] font-semibold tracking-[0.35em] text-gold-300 uppercase">
           Hybrid Vector + Graph RAG
         </p>
 

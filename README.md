@@ -16,7 +16,7 @@ graph:
 rag/            query-time retrieval: vector_rag.py, graph_rag.py, hybrid_rag.py
 KG/             ingestion / knowledge-graph-building pipeline
 backend/        FastAPI HTTP API in front of rag/
-frontend/       Vite + React web UI
+frontend/       Vite + React + Tailwind web UI (self-hosted fonts/images in public/)
 data/           source corpus (Book_*.json)
 docs/           Living_Specs.md (full spec), Flow.md (step-by-step + diagrams),
                 Guardrails.md (security/cost guardrails)

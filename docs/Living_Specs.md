@@ -106,6 +106,16 @@ KG/backup.py     export_graph / wipe_graph / import_graph — full graph JSON
 data/Book_*.json   source corpus: {chapter_name: chapter_text}, one file per book
 data/harry_potter_books.csv  raw source (gitignored — regenerate Book_*.json with
                               KG/csv_to_json.py rather than committing the CSV)
+backend/app.py   FastAPI wrapper over the three rag/ entry points: one POST
+                 /api/query routed on a "mode" field, plus per-call elapsed
+                 time and today's quota count read back from .daily_quota.json
+backend/requirements.txt
+frontend/        Vite + React (plain JS) + Tailwind v4 web UI for the API;
+                 components/, hooks/useAsk.js (request + live elapsed timer),
+                 constants.js (retrieval modes + the verified suggested
+                 questions), utils/formatAnswer.js (un-wraps the backend's
+                 textwrap.fill(60) output back into paragraphs/lists)
+frontend/public/ self-hosted title font + background image + crest
 docs/            Living_Specs.md (this file), Flow.md, Guardrails.md
 ```
 
@@ -350,7 +360,7 @@ increase in quota pressure worth knowing about.
 | 1   | `RELATED_TO` (historical, Napoleon corpus) was created in both directions                | n/a for current `Book` corpus — no `RELATED_TO` edges exist now |
 | 2   | `Person↔Person` / `Person↔Event` blanket edges (historical)                              | not used by the `Book` corpus; no `Book↔Book` equivalent exists |
 | 3   | **Resolved:** `main.ipynb` used to call the two retrievers separately with no combined answer | `rag/hybrid_rag.py`'s `query_hybrid_rag` now calls both and synthesizes one answer (see §7) — `main.ipynb` cell 4 |
-| 4   | No `requirements.txt` / lockfile                                                         | environment not reproducible              |
+| 4   | **Partly resolved:** `backend/requirements.txt` now pins the API + RAG dependencies, and `frontend/package-lock.json` locks the UI | the ingestion side (`prep.ipynb`, `KG/`) still has no manifest of its own, and the backend file is loosely pinned (no versions) |
 | 5   | `id()` used in relationship Cypher (`prep.ipynb`)                                        | deprecation warnings; use `elementId()`   |
 | 6   | Secrets (Gemini key, Neo4j password) appeared in a chat transcript                       | rotate when convenient                    |
 | 7   | Full Harry Potter corpus (7 books, `chunk_size=2000`) is large enough to hit the Gemini free-tier's **daily** embed quota (1000 requests/day), not just RPM/TPM | initial ingestion embedding can take multiple days to fully complete on the free tier; resumable via `book_filter` + the `textEmbedding IS NULL` check, so partial progress is never lost |
@@ -364,6 +374,7 @@ increase in quota pressure worth knowing about.
 | 15  | **Resolved this pass:** `KG/entities.py`, `KG/normalize_relationships.py`, and `KG/normalize_entities.py` had "Harry Potter" hardcoded as literal prompt text (not a parameter) — pointing this exact code at a different corpus would still tell Gemini it's reading Harry Potter | all three now take a `domain_description` parameter (default `"this text corpus"`); `rag/graph_rag.py`'s Cypher few-shot example was also rewritten to use domain-neutral placeholder values instead of literal `"Ron Weasley"`/`"Book_1_Philosopher_s_Stone"` |
 | 16  | **Resolved this pass:** `normalize_entities.py`'s alias-merging judged aliases from name/type/count alone — no source text, just the LLM's background knowledge (works for a famous franchise Gemini was trained on, unreliable for a private/obscure corpus) | `get_entity_evidence` now pulls a real excerpt from each entity's own `MENTIONED_IN` chunks, and the prompt is told to judge aliasing ONLY from that evidence — same grounding fix already applied to relationship verification (item 10), now applied consistently to entity merging too |
 | 17  | `query_hybrid_rag` can cost up to 3 of the shared 250/day quota per call (vs. 1 for a single-path call) | on a corpus large enough to need many questions per day, hybrid usage will exhaust the shared daily budget noticeably faster than using either path alone |
+| 19  | The Cypher-generating LLM picks relationship types by *plausible name*, not by what actually carries data. Verified: "Who is Albus Dumbledore's brother?" generated `BROTHER\|BROTHER_OF` (5 edges each) and got Aberforth by luck, while `SIBLING\|SIBLING_OF` (73/70 edges) held the real data — and would also have returned Ariana, so the answer was incomplete. The same cause explains graph questions that return "I don't know" despite the fact existing (`SERVANT_OF` for Dobby, `HEAD_OF` for Hogwarts) | with 176 relationship types in the schema, name-guessing is unreliable. `_entity_name_catalog` already injects real node names into the prompt; injecting the relationship types **ranked by edge count** would let the model prefer populated types over rare synonyms. Until then, graph answers can be silently partial rather than wrong |
 | 18  | Hybrid synthesis judges agreement/conflict/decline from two **finished text answers**, not from either side's raw evidence | if one side's answer is subtly wrong but not an obvious "I don't know," the synthesis step has no way to independently verify it against source text — it can only compare two opinions, not fact-check either one |
 All items from the previous pass are resolved — see below.
 
@@ -391,6 +402,7 @@ wired in via a `graph.query` wrapper (previously defined but dead code).
 - [ ] `requirements.txt` (langchain, langchain-neo4j, langchain-google-genai, langchain-text-splitters, neo4j, python-dotenv, tqdm, numpy).
 - [x] Rename `vectorRAG.py` → `rag/vector_rag.py` for portability.
 - [ ] Add 10 evaluation questions with expected answers.
+- [ ] Inject relationship types ranked by edge count into the Cypher prompt, so the LLM stops guessing rare synonyms (§8 item 19).
 - [x] Replace estimated token-budget cap with a real request-count (RPD) guardrail.
 - [x] Share one quota tracker between `rag/graph_rag.py` and `rag/vector_rag.py` instead of two independent ones.
 - [x] Persist the daily counter (file) so it survives a kernel/process restart.

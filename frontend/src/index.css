@@ -42,6 +42,12 @@
   --color-slytherin-light: #7fcf9a;
   --color-ravenclaw-light: #8ea5e6;
 
+  /* Heraldic ribbon tones: deep house colours, lifted to read on night */
+  --color-gryffindor-ribbon: #8c1512;
+  --color-slytherin-ribbon: #1f5c38;
+  --color-ravenclaw-ribbon: #233c7a;
+  --color-hufflepuff-ribbon: #b8912a;
+
   /* Muted text on glass */
   --color-mist: #b9ad93;
 

@@ -8,8 +8,8 @@ import json
 import datetime
 from pathlib import Path
 
-from VectorRAG import query_vector_rag
-from GraphRAG import generate_cypher_query
+from rag.vector_rag import query_vector_rag
+from rag.graph_rag import generate_cypher_query
 
 
 class PersistentDailyQuotaTracker:
@@ -123,22 +123,25 @@ def query_hybrid_rag(
     vector_source_property: str = "text",
     vector_embedding_property: str = "textEmbedding",
     domain_description: str = "this text corpus",
-) -> str:
+) -> dict:
     """
-    Answers a question by calling query_vector_rag (VectorRAG.py) and generate_cypher_query
-    (GraphRAG.py) unmodified, then reconciling their two answers with a third Gemini call.
+    Answers a question by calling query_vector_rag (rag/vector_rag.py) and generate_cypher_query
+    (rag/graph_rag.py) unmodified, then reconciling their two answers with a third Gemini call.
 
     Degrades gracefully: if only one source succeeds, returns that answer directly without
     spending a synthesis call; if both fail, raises one combined error; if the synthesis
     call itself fails, falls back to presenting both raw answers rather than discarding two
     successful retrievals over one failed cheap call.
+
+    Returns {"answer": str, "vector_chunks": list[str] | None, "graph_cypher_query": str | None} —
+    the metadata fields are None for whichever side didn't run or failed.
     """
     sanitized_question = _validate_and_sanitize_question(question)
 
-    vector_answer = None
+    vector_result = None
     vector_error = None
     try:
-        vector_answer = query_vector_rag(
+        vector_result = query_vector_rag(
             sanitized_question,
             vector_index_name,
             vector_node_label,
@@ -148,28 +151,45 @@ def query_hybrid_rag(
     except Exception as e:
         vector_error = e
 
-    graph_answer = None
+    graph_result = None
     graph_error = None
     try:
-        graph_answer = generate_cypher_query(sanitized_question, graph)
+        graph_result = generate_cypher_query(sanitized_question, graph)
     except Exception as e:
         graph_error = e
 
-    if vector_answer is None and graph_answer is None:
+    if vector_result is None and graph_result is None:
         raise RuntimeError(
             f"Hybrid RAG Error: both retrieval paths failed. "
             f"Vector RAG: {vector_error}; Graph RAG: {graph_error}"
         )
 
-    if graph_answer is None:
-        return f"(Graph RAG unavailable — answer from Vector RAG only)\n\n{vector_answer}"
-    if vector_answer is None:
-        return f"(Vector RAG unavailable — answer from Graph RAG only)\n\n{graph_answer}"
+    vector_chunks = vector_result["chunks"] if vector_result else None
+    graph_cypher_query = graph_result["cypher_query"] if graph_result else None
+
+    if graph_result is None:
+        return {
+            "answer": f"(Graph RAG unavailable — answer from Vector RAG only)\n\n{vector_result['answer']}",
+            "vector_chunks": vector_chunks,
+            "graph_cypher_query": None,
+        }
+    if vector_result is None:
+        return {
+            "answer": f"(Vector RAG unavailable — answer from Graph RAG only)\n\n{graph_result['answer']}",
+            "vector_chunks": None,
+            "graph_cypher_query": graph_cypher_query,
+        }
 
     try:
-        return _synthesize(sanitized_question, vector_answer, graph_answer, domain_description)
+        answer = _synthesize(sanitized_question, vector_result["answer"], graph_result["answer"], domain_description)
     except Exception:
-        return (
+        answer = (
             "(Automatic synthesis unavailable — showing both raw answers)\n\n"
-            f"Vector RAG: {vector_answer}\n\nGraph RAG: {graph_answer}"
+            f"Vector RAG: {vector_result['answer']}\n\nGraph RAG: {graph_result['answer']}"
         )
+
+    return {
+        "answer": answer,
+        "vector_chunks": vector_chunks,
+        "graph_cypher_query": graph_cypher_query,
+    }

@@ -79,19 +79,23 @@ KG/
                  aliasing ONLY from that evidence — not from background/trivia
                  knowledge of the entity's name (see §8, item 16, for why this
                  matters on a corpus the model wasn't trained on)
-VectorRAG.py     query_vector_rag(question, index, label, text_prop, emb_prop)
-                 input validation, prompt-injection isolation, retrieval/
-                 context caps, daily quota tracking (see docs/Guardrails.md)
-GraphRAG.py      generate_cypher_query(question, graph)
-                 input validation, prompt-injection isolation, entity-name
-                 allow-list, daily quota tracking, read-only + row-limit
-                 enforcement on generated Cypher (via a graph.query wrapper)
-HybridRAG.py     query_hybrid_rag(question, graph, vector_index_name, vector_node_label,
-                 vector_source_property, vector_embedding_property, domain_description)
-                 -> calls query_vector_rag and generate_cypher_query UNMODIFIED, then
-                 reconciles their two answers with a third gemini-3.5-flash-lite call;
-                 degrades to a partial answer if only one source succeeds, raises only if
-                 both fail; shares the same .daily_quota.json (up to 3 requests/call)
+rag/vector_rag.py    query_vector_rag(question, index, label, text_prop, emb_prop)
+                     input validation, prompt-injection isolation, retrieval/
+                     context caps, daily quota tracking (see docs/Guardrails.md)
+                     -> {"answer": str, "chunks": list[str]}
+rag/graph_rag.py     generate_cypher_query(question, graph)
+                     input validation, prompt-injection isolation, entity-name
+                     allow-list, daily quota tracking, read-only + row-limit
+                     enforcement on generated Cypher (via a graph.query wrapper)
+                     -> {"answer": str, "cypher_query": str}
+rag/hybrid_rag.py    query_hybrid_rag(question, graph, vector_index_name, vector_node_label,
+                     vector_source_property, vector_embedding_property, domain_description)
+                     -> calls query_vector_rag and generate_cypher_query UNMODIFIED, then
+                     reconciles their two answers with a third gemini-3.5-flash-lite call;
+                     degrades to a partial answer if only one source succeeds, raises only if
+                     both fail; shares the same .daily_quota.json (up to 3 requests/call)
+                     -> {"answer": str, "vector_chunks": list[str] | None,
+                         "graph_cypher_query": str | None}
 prep.ipynb       one-time ingestion pipeline (§6)
 main.ipynb       query entry point (§7)
 KG/csv_to_json.py  one-off converter: data/harry_potter_books.csv -> data/Book_*.json
@@ -105,8 +109,9 @@ data/harry_potter_books.csv  raw source (gitignored — regenerate Book_*.json w
 docs/            Living_Specs.md (this file), Flow.md, Guardrails.md
 ```
 
-Note: the file is `VectorRAG.py` (capital V) — imports must match that case
-exactly (matters on Linux/CI, not just Windows).
+Note: the query-time RAG modules live under `rag/` (`vector_rag.py`, `graph_rag.py`,
+`hybrid_rag.py`) as of the frontend/backend split — `KG/` remains the separate
+ingestion/graph-building pipeline and was not moved.
 
 ---
 
@@ -122,7 +127,7 @@ exactly (matters on Linux/CI, not just Windows).
 | `Entity`  | ~1,800 (after dedup)      | `name`, `type` (`Character`/`Location`/`Spell`/`Object`/`Creature`/`Organization`) |
 
 `Book.name` values are **filename-derived ids** (underscores, no spaces), not the
-human-readable book titles. `GraphRAG.py` injects the real list
+human-readable book titles. `rag/graph_rag.py` injects the real list
 (`_entity_name_catalog`, matching `Person`/`Event`/`Book`) into the Cypher
 prompt as an allow-list so the LLM stops inventing slugs — this catalog does
 **not** include `Entity` names (too many to usefully allow-list; the LLM relies
@@ -149,7 +154,7 @@ connection between characters/places now flows through shared `Entity` nodes
 
 ## 5. Guardrails
 
-Implemented across `GraphRAG.py`, `VectorRAG.py`, `KG/config.py`. Full detail,
+Implemented across `rag/graph_rag.py`, `rag/vector_rag.py`, `KG/config.py`. Full detail,
 including what is **not** implemented yet, lives in **[Guardrails.md](Guardrails.md)**
 — keep that file in sync whenever a guardrail is added or changed.
 
@@ -233,7 +238,7 @@ is the safe replacement.
 
 ## 7. Query paths
 
-### `query_vector_rag` (`VectorRAG.py`)
+### `query_vector_rag` (`rag/vector_rag.py`)
 
 ```
 question
@@ -245,13 +250,13 @@ question
   -> answer (wrapped to 60 cols)
 
 daily_limiter.check_and_increment() runs before all of the above — reads/
-writes .daily_quota.json (shared with GraphRAG.py), raises if today's count
+writes .daily_quota.json (shared with rag/graph_rag.py), raises if today's count
 has already reached max_rpd (250)
 ```
 
 Answers strictly from retrieved chunk text ("say you don't know" otherwise).
 
-### `generate_cypher_query` (`GraphRAG.py`)
+### `generate_cypher_query` (`rag/graph_rag.py`)
 
 ```
 question
@@ -283,7 +288,7 @@ under either type depending on the pair, so querying only one direction
 silently misses results.
 
 `daily_limiter.check_and_increment()` runs before all of the above, sharing
-the same `.daily_quota.json` counter as `VectorRAG.py`. `graph.query` is
+the same `.daily_quota.json` counter as `rag/vector_rag.py`. `graph.query` is
 temporarily wrapped for the duration of `cypher_chain.invoke(...)` — every
 generated Cypher string passes through `_enforce_readonly_cypher()` (raises
 on write keywords) and `_ensure_cypher_limit()` (adds `LIMIT 25` if missing)
@@ -298,16 +303,16 @@ irrelevant result (e.g. a `CONTAINS` match that hit an unrelated fact) got
 reported as if it answered the question. `QA_TEMPLATE` replaces that with an
 explicit instruction to verify the rows actually, specifically answer the
 question before answering, and to say "I don't know" otherwise — the same
-honesty guardrail `VectorRAG.py`'s system prompt already had, now applied here
+honesty guardrail `rag/vector_rag.py`'s system prompt already had, now applied here
 too.
 
-### `query_hybrid_rag` (`HybridRAG.py`)
+### `query_hybrid_rag` (`rag/hybrid_rag.py`)
 
 ```
 question
   -> _validate_and_sanitize_question
-  -> query_vector_rag(...) [try/except]     # unmodified call into VectorRAG.py
-  -> generate_cypher_query(...) [try/except] # unmodified call into GraphRAG.py
+  -> query_vector_rag(...) [try/except]     # unmodified call into rag/vector_rag.py
+  -> generate_cypher_query(...) [try/except] # unmodified call into rag/graph_rag.py
   -> both failed?  -> raise combined error
   -> only one succeeded? -> return it directly, prefixed "(<other> unavailable — ...)"
   -> both succeeded -> HYBRID_SYNTHESIS_TEMPLATE | gemini-3.5-flash-lite | StrOutputParser
@@ -315,7 +320,7 @@ question
   -> answer (wrapped to 60 cols)
 ```
 
-Deliberately treats `VectorRAG.py` and `GraphRAG.py` as black boxes — it never
+Deliberately treats `rag/vector_rag.py` and `rag/graph_rag.py` as black boxes — it never
 touches their internals, only imports and calls their existing public
 functions, so both remain fully independent and usable exactly as before (see
 `main.ipynb` cells 2 and 3). The synthesis prompt wraps each side's answer in
@@ -344,7 +349,7 @@ increase in quota pressure worth knowing about.
 | --- | ------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | 1   | `RELATED_TO` (historical, Napoleon corpus) was created in both directions                | n/a for current `Book` corpus — no `RELATED_TO` edges exist now |
 | 2   | `Person↔Person` / `Person↔Event` blanket edges (historical)                              | not used by the `Book` corpus; no `Book↔Book` equivalent exists |
-| 3   | **Resolved:** `main.ipynb` used to call the two retrievers separately with no combined answer | `HybridRAG.py`'s `query_hybrid_rag` now calls both and synthesizes one answer (see §7) — `main.ipynb` cell 4 |
+| 3   | **Resolved:** `main.ipynb` used to call the two retrievers separately with no combined answer | `rag/hybrid_rag.py`'s `query_hybrid_rag` now calls both and synthesizes one answer (see §7) — `main.ipynb` cell 4 |
 | 4   | No `requirements.txt` / lockfile                                                         | environment not reproducible              |
 | 5   | `id()` used in relationship Cypher (`prep.ipynb`)                                        | deprecation warnings; use `elementId()`   |
 | 6   | Secrets (Gemini key, Neo4j password) appeared in a chat transcript                       | rotate when convenient                    |
@@ -355,8 +360,8 @@ increase in quota pressure worth knowing about.
 | 11  | No `gender` (or any attribute beyond `type`) is captured on `Entity` nodes | Graph RAG can't reliably filter "sons" vs "daughters" — it either returns all children regardless of sex, or gets lucky/unlucky based on whether the summarizing LLM happens to recall the character's gender from training data |
 | 12  | Two different characters can share the exact same name in-universe (e.g. Tom Riddle Sr./Jr. — Jr. being Voldemort; Barty Crouch Sr./Jr.) | entity extraction has no disambiguation for this, so both collapse into one `Entity` node; produced literal self-loops (`X PARENT_OF X`) that had to be deleted, leaving those specific parent/child facts permanently unanswerable via Graph RAG (Vector RAG still handles them from raw text) |
 | 13  | `verify_relationships_with_source`'s conservative grounding (only confirms what a single ~2000-char chunk states outright) has real recall loss | some genuinely true relationships (e.g. several of Arthur Weasley's other children) were dropped because their specific `sourceChunk` didn't restate the name explicitly; re-running `extract_relationships_for_category` can recover them |
-| 14  | `GraphRAG.py`'s Cypher prompt now instructs checking both `PARENT_OF` and `CHILD_OF` directions for family questions, since the same fact can end up stored under either type depending on the pair | works, but is a prompt-level patch over an inconsistent underlying schema, not a real fix; a future normalization pass could collapse both into one canonical direction |
-| 15  | **Resolved this pass:** `KG/entities.py`, `KG/normalize_relationships.py`, and `KG/normalize_entities.py` had "Harry Potter" hardcoded as literal prompt text (not a parameter) — pointing this exact code at a different corpus would still tell Gemini it's reading Harry Potter | all three now take a `domain_description` parameter (default `"this text corpus"`); `GraphRAG.py`'s Cypher few-shot example was also rewritten to use domain-neutral placeholder values instead of literal `"Ron Weasley"`/`"Book_1_Philosopher_s_Stone"` |
+| 14  | `rag/graph_rag.py`'s Cypher prompt now instructs checking both `PARENT_OF` and `CHILD_OF` directions for family questions, since the same fact can end up stored under either type depending on the pair | works, but is a prompt-level patch over an inconsistent underlying schema, not a real fix; a future normalization pass could collapse both into one canonical direction |
+| 15  | **Resolved this pass:** `KG/entities.py`, `KG/normalize_relationships.py`, and `KG/normalize_entities.py` had "Harry Potter" hardcoded as literal prompt text (not a parameter) — pointing this exact code at a different corpus would still tell Gemini it's reading Harry Potter | all three now take a `domain_description` parameter (default `"this text corpus"`); `rag/graph_rag.py`'s Cypher few-shot example was also rewritten to use domain-neutral placeholder values instead of literal `"Ron Weasley"`/`"Book_1_Philosopher_s_Stone"` |
 | 16  | **Resolved this pass:** `normalize_entities.py`'s alias-merging judged aliases from name/type/count alone — no source text, just the LLM's background knowledge (works for a famous franchise Gemini was trained on, unreliable for a private/obscure corpus) | `get_entity_evidence` now pulls a real excerpt from each entity's own `MENTIONED_IN` chunks, and the prompt is told to judge aliasing ONLY from that evidence — same grounding fix already applied to relationship verification (item 10), now applied consistently to entity merging too |
 | 17  | `query_hybrid_rag` can cost up to 3 of the shared 250/day quota per call (vs. 1 for a single-path call) | on a corpus large enough to need many questions per day, hybrid usage will exhaust the shared daily budget noticeably faster than using either path alone |
 | 18  | Hybrid synthesis judges agreement/conflict/decline from two **finished text answers**, not from either side's raw evidence | if one side's answer is subtly wrong but not an obvious "I don't know," the synthesis step has no way to independently verify it against source text — it can only compare two opinions, not fact-check either one |
@@ -367,12 +372,12 @@ Graph RAG to answer biographical/relational questions via chunk text were
 considered and deliberately skipped (see Guardrails.md's "Considered, not
 needed" table for why each one).
 
-Resolved since the last pass: `vectorRAG.py` renamed to `VectorRAG.py` (import
+Resolved since the last pass: `vectorRAG.py` renamed to `rag/vector_rag.py` (import
 casing now matches on every OS); stress-test question replaced with real
 sample questions in `main.ipynb`; the old `SessionTokenBudget` (token-estimate
 cap) was replaced with a `PersistentDailyQuotaTracker` — one shared counter
-(`.daily_quota.json`, gitignored) read and written by both `GraphRAG.py` and
-`VectorRAG.py`, `max_rpd=250`, survives a kernel/process restart;
+(`.daily_quota.json`, gitignored) read and written by both `rag/graph_rag.py` and
+`rag/vector_rag.py`, `max_rpd=250`, survives a kernel/process restart;
 `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` are now actually
 wired in via a `graph.query` wrapper (previously defined but dead code).
 
@@ -380,13 +385,13 @@ wired in via a `graph.query` wrapper (previously defined but dead code).
 
 ## 9. Roadmap
 
-- [x] Merge vector + graph context into a single hybrid prompt in `main.ipynb` — `HybridRAG.py`, see §7.
+- [x] Merge vector + graph context into a single hybrid prompt in `main.ipynb` — `rag/hybrid_rag.py`, see §7.
 - [ ] Derive `RELATED_TO` from co-occurrence in chunk text instead of all-pairs.
 - [ ] Single-direction relationships + `elementId()`.
 - [ ] `requirements.txt` (langchain, langchain-neo4j, langchain-google-genai, langchain-text-splitters, neo4j, python-dotenv, tqdm, numpy).
-- [x] Rename `vectorRAG.py` → `VectorRAG.py` for portability.
+- [x] Rename `vectorRAG.py` → `rag/vector_rag.py` for portability.
 - [ ] Add 10 evaluation questions with expected answers.
 - [x] Replace estimated token-budget cap with a real request-count (RPD) guardrail.
-- [x] Share one quota tracker between `GraphRAG.py` and `VectorRAG.py` instead of two independent ones.
+- [x] Share one quota tracker between `rag/graph_rag.py` and `rag/vector_rag.py` instead of two independent ones.
 - [x] Persist the daily counter (file) so it survives a kernel/process restart.
 - [x] Wire `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` into `generate_cypher_query()` via a `graph.query` wrapper.

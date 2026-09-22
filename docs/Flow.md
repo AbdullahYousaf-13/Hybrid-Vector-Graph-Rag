@@ -76,9 +76,9 @@ flowchart LR
 
 | # | Step | Where | Tool used | Details |
 |---|------|-------|-----------|---------|
-| 0 | Validate & sanitize | `_validate_and_sanitize_question` (`VectorRAG.py`) | plain Python | **guardrail**: rejects empty input and anything over 300 chars, strips `\r\n\t` |
-| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`VectorRAG.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: raises `RuntimeError` once today's request count reaches `max_rpd` (250); shared with `GraphRAG.py` and survives a kernel restart |
-| 2 | Connect to the index | `Neo4jVector.from_existing_graph` (`VectorRAG.py`) | `langchain-neo4j` | points at index `Chunk`, text prop `text`, vector prop `textEmbedding` |
+| 0 | Validate & sanitize | `_validate_and_sanitize_question` (`rag/vector_rag.py`) | plain Python | **guardrail**: rejects empty input and anything over 300 chars, strips `\r\n\t` |
+| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`rag/vector_rag.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: raises `RuntimeError` once today's request count reaches `max_rpd` (250); shared with `rag/graph_rag.py` and survives a kernel restart |
+| 2 | Connect to the index | `Neo4jVector.from_existing_graph` (`rag/vector_rag.py`) | `langchain-neo4j` | points at index `Chunk`, text prop `text`, vector prop `textEmbedding` |
 | 3 | Embed the question | same call's `embedding=` | **Gemini `gemini-embedding-001`** via `langchain-google-genai` `GoogleGenerativeAIEmbeddings` | task `RETRIEVAL_QUERY`, **768 dims** (must match the stored vectors) |
 | 4 | Find nearest chunks | `.as_retriever(search_kwargs={"k": 6}).invoke(...)` | Neo4j `db.index.vector.queryNodes` | top **6** by cosine similarity — raised from 3 once the corpus grew to 7 books, since 3 chunks × 2000 chars was already exceeding the old 3500-char context cap |
 | 5 | Build context | `"\n\n".join(...)`, then truncate | plain Python | **guardrail**: context string hard-capped at 8000 chars (raised from 3500 alongside `k`) to bound the prompt sent to the LLM |
@@ -87,7 +87,7 @@ flowchart LR
 ### The code
 
 ```python
-# VectorRAG.py, simplified
+# rag/vector_rag.py, simplified
 def query_vector_rag(question, ...):
     question = _validate_and_sanitize_question(question)                  # 0  guardrail
     daily_limiter.check_and_increment()                                   # 1  guardrail (RPD cap)
@@ -103,7 +103,7 @@ def query_vector_rag(question, ...):
     prompt = "...<user_input>{input}</user_input>..."                     # marks input untrusted
     chain  = prompt | ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite") | StrOutputParser()  # 6
     result = chain.invoke({"context": context, "input": question})
-    return textwrap.fill(result, 60)
+    return {"answer": textwrap.fill(result, 60), "chunks": [c.page_content for c in chunks]}
 ```
 
 ---
@@ -124,9 +124,9 @@ flowchart LR
 
 | # | Step | Where | Tool used | Details |
 |---|------|-------|-----------|---------|
-| 0 | Validate & sanitize | `_validate_and_sanitize_question` (`GraphRAG.py`) | plain Python | **guardrail**: same rule as Vector RAG — reject empty/>300 chars, strip `\r\n\t` |
-| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`GraphRAG.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: shared counter with `VectorRAG.py` — raises once today's combined count reaches `max_rpd` (250); survives a kernel restart |
-| 2 | Collect real names | `_entity_name_catalog(graph)` (`GraphRAG.py`) | Cypher `MATCH (n) WHERE n:Person OR n:Event OR n:Book` | **guardrail**: allow-list so the LLM uses e.g. `Book_1_Philosopher_s_Stone` and doesn't invent slugs |
+| 0 | Validate & sanitize | `_validate_and_sanitize_question` (`rag/graph_rag.py`) | plain Python | **guardrail**: same rule as Vector RAG — reject empty/>300 chars, strip `\r\n\t` |
+| 1 | Check daily quota | `daily_limiter.check_and_increment()` (`rag/graph_rag.py`) | plain Python `PersistentDailyQuotaTracker`, backed by `.daily_quota.json` | **guardrail**: shared counter with `rag/vector_rag.py` — raises once today's combined count reaches `max_rpd` (250); survives a kernel restart |
+| 2 | Collect real names | `_entity_name_catalog(graph)` (`rag/graph_rag.py`) | Cypher `MATCH (n) WHERE n:Person OR n:Event OR n:Book` | **guardrail**: allow-list so the LLM uses e.g. `Book_1_Philosopher_s_Stone` and doesn't invent slugs |
 | 3 | Build the prompt | `PromptTemplate` (`langchain-core`) | `CYPHER_GENERATION_TEMPLATE` | fills in `{schema}` (from Neo4j), `{entity_names}`, few-shot examples, and wraps `{question}` in `<user_question>` tags marked untrusted (**prompt-injection guardrail**); also instructs `Entity` name matching via case-insensitive `CONTAINS` (not exact equality — `Entity` names aren't in the allow-list) and to check both `PARENT_OF` and `CHILD_OF` directions (via `UNION`) for any parent/child question, since the same fact can be stored under either direction |
 | 4 | Write + guarded run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`), with `graph.query` wrapped | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI` | chain internally: LLM writes Cypher → the wrapped `graph.query` runs `_enforce_readonly_cypher()` (raises on `CREATE`/`DELETE`/`SET`/etc.) then `_ensure_cypher_limit()` (adds `LIMIT 25` if missing) → the *checked* query actually executes → LLM turns rows into a sentence |
 | 5 | Format | `textwrap.fill(response["result"], 60)` | plain Python | wrap to 60 columns |
@@ -134,7 +134,7 @@ flowchart LR
 ### The code
 
 ```python
-# GraphRAG.py, simplified
+# rag/graph_rag.py, simplified
 def generate_cypher_query(question, graph):
     question = _validate_and_sanitize_question(question)          # 0  guardrail
     daily_limiter.check_and_increment()                           # 1  guardrail (RPD cap)
@@ -155,11 +155,12 @@ def generate_cypher_query(question, graph):
         return original_query(cypher, *a, **kw)
     graph.query = _guarded_query
     try:
-        result = chain.invoke({"query": question})["result"]
+        response = chain.invoke({"query": question})              # return_intermediate_steps=True
     finally:
         graph.query = original_query                              #     always restore
 
-    return textwrap.fill(result, 60)                                # 5
+    cypher = response["intermediate_steps"][0]["query"]
+    return {"answer": textwrap.fill(response["result"], 60), "cypher_query": cypher}  # 5
 ```
 
 ---
@@ -181,8 +182,8 @@ flowchart LR
 
 | # | Step | Where | Tool used | Details |
 |---|------|-------|-----------|---------|
-| 0 | Validate & sanitize | `_validate_and_sanitize_question` (`HybridRAG.py`) | plain Python | same rule as the other two paths |
-| 1 | Call both paths | `query_vector_rag(...)`, `generate_cypher_query(...)` | unmodified imports from `VectorRAG.py`/`GraphRAG.py` | each wrapped in its own `try/except` — neither path's code is touched |
+| 0 | Validate & sanitize | `_validate_and_sanitize_question` (`rag/hybrid_rag.py`) | plain Python | same rule as the other two paths |
+| 1 | Call both paths | `query_vector_rag(...)`, `generate_cypher_query(...)` | unmodified imports from `rag/vector_rag.py`/`rag/graph_rag.py` | each wrapped in its own `try/except` — neither path's code is touched |
 | 2 | Handle partial failure | plain Python | if only one succeeded, return it directly (prefixed `"(<other> unavailable — ...)"`) and skip synthesis entirely — no need to spend a 3rd quota request reconciling one real answer against nothing |
 | 3 | Reconcile | `HYBRID_SYNTHESIS_TEMPLATE` | **Gemini `gemini-3.5-flash-lite`** via `ChatGoogleGenerativeAI`, LCEL chain | only runs if both succeeded; each answer wrapped in its own `<text_search_answer>`/`<knowledge_graph_answer>` untrusted-data tag; explicit rules for agree / one-declines / conflict / both-decline (see below) |
 | 4 | Format | `textwrap.fill(result, 60)` | plain Python | same convention as the other two paths |
@@ -202,40 +203,44 @@ call can cost up to 3 of the shared 250/day budget.**
 | Both decline | Say plainly the answer couldn't be found — don't fabricate |
 
 This reuses the "don't guess, say you don't know" honesty rule already built
-into both `VectorRAG.py`'s system prompt and `GraphRAG.py`'s `QA_TEMPLATE`,
+into both `rag/vector_rag.py`'s system prompt and `rag/graph_rag.py`'s `QA_TEMPLATE`,
 rather than inventing a new one.
 
 ### The code
 
 ```python
-# HybridRAG.py, simplified
+# rag/hybrid_rag.py, simplified
 def query_hybrid_rag(question, graph, ...):
     question = _validate_and_sanitize_question(question)
 
     try:
-        vector_answer = query_vector_rag(question, ...)          # 1, unmodified
+        vector_result = query_vector_rag(question, ...)          # 1, unmodified -> {"answer", "chunks"}
     except Exception as e:
-        vector_answer, vector_error = None, e
+        vector_result, vector_error = None, e
 
     try:
-        graph_answer = generate_cypher_query(question, graph)    # 1, unmodified
+        graph_result = generate_cypher_query(question, graph)    # 1, unmodified -> {"answer", "cypher_query"}
     except Exception as e:
-        graph_answer, graph_error = None, e
+        graph_result, graph_error = None, e
 
-    if vector_answer is None and graph_answer is None:            # 2
+    if vector_result is None and graph_result is None:            # 2
         raise RuntimeError(f"Hybrid RAG Error: both retrieval paths failed. ...")
-    if graph_answer is None:
-        return f"(Graph RAG unavailable — answer from Vector RAG only)\n\n{vector_answer}"
-    if vector_answer is None:
-        return f"(Vector RAG unavailable — answer from Graph RAG only)\n\n{graph_answer}"
+    if graph_result is None:
+        return {"answer": f"(Graph RAG unavailable — answer from Vector RAG only)\n\n{vector_result['answer']}",
+                "vector_chunks": vector_result["chunks"], "graph_cypher_query": None}
+    if vector_result is None:
+        return {"answer": f"(Vector RAG unavailable — answer from Graph RAG only)\n\n{graph_result['answer']}",
+                "vector_chunks": None, "graph_cypher_query": graph_result["cypher_query"]}
 
     try:
         daily_limiter.check_and_increment()                       # 3rd quota request
         chain = prompt | ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite") | StrOutputParser()
-        result = chain.invoke({"question": question, "vector_answer": vector_answer, "graph_answer": graph_answer})
-        return textwrap.fill(result, 60)                          # 4
+        result = chain.invoke({"question": question, "vector_answer": vector_result["answer"], "graph_answer": graph_result["answer"]})
+        answer = textwrap.fill(result, 60)                        # 4
     except Exception:
-        return f"(Automatic synthesis unavailable — showing both raw answers)\n\nVector RAG: {vector_answer}\n\nGraph RAG: {graph_answer}"
+        answer = f"(Automatic synthesis unavailable — showing both raw answers)\n\nVector RAG: {vector_result['answer']}\n\nGraph RAG: {graph_result['answer']}"
+
+    return {"answer": answer, "vector_chunks": vector_result["chunks"], "graph_cypher_query": graph_result["cypher_query"]}
 ```
 
 ---

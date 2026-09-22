@@ -160,10 +160,13 @@ def generate_cypher_query(
     graph,
     temperature: float = 0,
     verbose: bool = True,
-) -> str:
+) -> dict:
     """
     Answers a natural-language question using Graph RAG with read-only enforcement,
     row limits, and persistent shared daily quota tracking.
+
+    Returns {"answer": str, "cypher_query": str} — cypher_query is the
+    Cypher the LLM generated and actually ran against Neo4j.
     """
     sanitized_question = _validate_and_sanitize_question(question)
 
@@ -190,6 +193,7 @@ def generate_cypher_query(
         cypher_prompt=cypher_prompt,
         qa_prompt=qa_prompt,
         allow_dangerous_requests=True,
+        return_intermediate_steps=True,
     )
 
     # Guardrail: intercept the exact Cypher the chain is about to run against
@@ -209,4 +213,10 @@ def generate_cypher_query(
         graph.query = original_query  # always restore, even if this raised
 
     raw_result = response["result"]
-    return textwrap.fill(raw_result, 60)
+    intermediate_steps = response.get("intermediate_steps") or []
+    cypher_query = intermediate_steps[0].get("query", "") if intermediate_steps else ""
+
+    return {
+        "answer": textwrap.fill(raw_result, 60),
+        "cypher_query": cypher_query,
+    }

@@ -66,10 +66,13 @@ def query_vector_rag(
     vector_node_label: str,
     vector_source_property: str,
     vector_embedding_property: str,
-) -> str:
+) -> dict:
     """
     Retrieves chunks from Neo4j vector index with chunk limiting (`k=3`),
     context truncation, and shared persistent daily quota tracking.
+
+    Returns {"answer": str, "chunks": list[str]} — chunks are the raw
+    retrieved chunk texts, in retrieval order.
     """
     sanitized_question = _validate_and_sanitize_question(question)
 
@@ -118,4 +121,7 @@ def query_vector_rag(
     chain = prompt | llm | StrOutputParser()
     result = chain.invoke({"context": context, "input": sanitized_question})
 
-    return textwrap.fill(result, 60)
+    return {
+        "answer": textwrap.fill(result, 60),
+        "chunks": [d.page_content for d in docs],
+    }

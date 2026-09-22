@@ -6,23 +6,23 @@ Last updated: 2026-09-21
 
 | Guardrail | Where | Why |
 |---|---|---|
-| Input validation | `GraphRAG.py`, `VectorRAG.py`, `HybridRAG.py` | reject empty questions and anything over 300 chars; strip `\r\n\t` so a question can't fake new prompt lines |
-| Prompt-injection isolation | `GraphRAG.py`, `VectorRAG.py`, `HybridRAG.py` | user question wrapped in `<user_question>`/`<user_input>` tags + told to the LLM as untrusted data, so it can't be read as an instruction. `HybridRAG.py` extends this to the *answers themselves* — each side's answer is wrapped in its own `<text_search_answer>`/`<knowledge_graph_answer>` tag before the synthesis call, since either may echo corpus text |
-| Entity-name allow-list | `GraphRAG.py` | LLM must match `Person`/`Event`/`Book` `.name` only against real values pulled from the graph, so it can't hallucinate a fake node to query. `Entity` nodes are deliberately excluded (too many to enumerate) — instead the prompt requires case-insensitive `CONTAINS` matching for those |
-| Answer-relevance check before responding | `GraphRAG.py` (`qa_prompt`/`QA_TEMPLATE`) | `GraphCypherQAChain`'s *default* QA prompt only says "say you don't know if results are empty" — a non-empty but irrelevant `CONTAINS` match was getting reported as if it answered the question. `QA_TEMPLATE` requires the LLM to verify the returned rows actually, specifically answer the question first |
+| Input validation | `rag/graph_rag.py`, `rag/vector_rag.py`, `rag/hybrid_rag.py` | reject empty questions and anything over 300 chars; strip `\r\n\t` so a question can't fake new prompt lines |
+| Prompt-injection isolation | `rag/graph_rag.py`, `rag/vector_rag.py`, `rag/hybrid_rag.py` | user question wrapped in `<user_question>`/`<user_input>` tags + told to the LLM as untrusted data, so it can't be read as an instruction. `rag/hybrid_rag.py` extends this to the *answers themselves* — each side's answer is wrapped in its own `<text_search_answer>`/`<knowledge_graph_answer>` tag before the synthesis call, since either may echo corpus text |
+| Entity-name allow-list | `rag/graph_rag.py` | LLM must match `Person`/`Event`/`Book` `.name` only against real values pulled from the graph, so it can't hallucinate a fake node to query. `Entity` nodes are deliberately excluded (too many to enumerate) — instead the prompt requires case-insensitive `CONTAINS` matching for those |
+| Answer-relevance check before responding | `rag/graph_rag.py` (`qa_prompt`/`QA_TEMPLATE`) | `GraphCypherQAChain`'s *default* QA prompt only says "say you don't know if results are empty" — a non-empty but irrelevant `CONTAINS` match was getting reported as if it answered the question. `QA_TEMPLATE` requires the LLM to verify the returned rows actually, specifically answer the question first |
 | Error / secret masking | `KG/config.py` | real Neo4j connection error (can contain URI/creds) is logged locally only; caller gets a generic message |
-| Read-only enforcement on generated Cypher | `GraphRAG.py` | `graph.query` is wrapped for the duration of each call; `_enforce_readonly_cypher()` rejects any generated query containing `CREATE`/`DELETE`/`SET`/`DROP`/`MERGE`/`REMOVE`/`DETACH`/`ALTER` before it reaches Neo4j — closes the gap `allow_dangerous_requests=True` otherwise leaves open |
+| Read-only enforcement on generated Cypher | `rag/graph_rag.py` | `graph.query` is wrapped for the duration of each call; `_enforce_readonly_cypher()` rejects any generated query containing `CREATE`/`DELETE`/`SET`/`DROP`/`MERGE`/`REMOVE`/`DETACH`/`ALTER` before it reaches Neo4j — closes the gap `allow_dangerous_requests=True` otherwise leaves open |
 
 ## Cost guardrails — added
 
 | Guardrail | Where | Why |
 |---|---|---|
-| Retrieval cap `k=6` | `VectorRAG.py` | fewer chunks fetched per question = smaller prompt (raised from `k=3` once the corpus grew to 7 books) |
-| Context truncation (8000 chars) | `VectorRAG.py` | caps how much chunk text gets sent to the LLM (raised from 3500 alongside `k`) |
-| Shared persistent daily quota (`max_rpd=250`, backed by `.daily_quota.json`) | `GraphRAG.py`, `VectorRAG.py`, `HybridRAG.py` | one counter, read/written by all three files, keyed by date — survives a kernel restart and can't be doubled by alternating between paths. `.daily_quota.json` is gitignored (it's runtime state, not source). **A single `query_hybrid_rag` call can cost up to 3 of the shared budget** (one per delegated call, plus one for its own synthesis call) — a real, non-trivial increase in quota pressure worth knowing about |
-| Cheaper model `gemini-3.5-flash-lite` | `GraphRAG.py`, `VectorRAG.py`, `HybridRAG.py` | lower cost/latency per call than the previous flash model |
-| Row limit on generated Cypher | `GraphRAG.py` | same `graph.query` wrapper appends `LIMIT 25` via `_ensure_cypher_limit()` when the generated query has none, so an unbounded `MATCH (n) RETURN n` can't pull the whole graph into the summarization prompt |
-| Skip synthesis on partial failure | `HybridRAG.py` | if only one of the two delegated calls succeeds, `query_hybrid_rag` returns that answer directly instead of spending a 3rd quota request reconciling a real answer against nothing |
+| Retrieval cap `k=6` | `rag/vector_rag.py` | fewer chunks fetched per question = smaller prompt (raised from `k=3` once the corpus grew to 7 books) |
+| Context truncation (8000 chars) | `rag/vector_rag.py` | caps how much chunk text gets sent to the LLM (raised from 3500 alongside `k`) |
+| Shared persistent daily quota (`max_rpd=250`, backed by `.daily_quota.json`) | `rag/graph_rag.py`, `rag/vector_rag.py`, `rag/hybrid_rag.py` | one counter, read/written by all three files, keyed by date — survives a kernel restart and can't be doubled by alternating between paths. `.daily_quota.json` is gitignored (it's runtime state, not source). **A single `query_hybrid_rag` call can cost up to 3 of the shared budget** (one per delegated call, plus one for its own synthesis call) — a real, non-trivial increase in quota pressure worth knowing about |
+| Cheaper model `gemini-3.5-flash-lite` | `rag/graph_rag.py`, `rag/vector_rag.py`, `rag/hybrid_rag.py` | lower cost/latency per call than the previous flash model |
+| Row limit on generated Cypher | `rag/graph_rag.py` | same `graph.query` wrapper appends `LIMIT 25` via `_ensure_cypher_limit()` when the generated query has none, so an unbounded `MATCH (n) RETURN n` can't pull the whole graph into the summarization prompt |
+| Skip synthesis on partial failure | `rag/hybrid_rag.py` | if only one of the two delegated calls succeeds, `query_hybrid_rag` returns that answer directly instead of spending a 3rd quota request reconciling a real answer against nothing |
 
 ### How the read-only + row-limit wrapper works
 
@@ -32,7 +32,7 @@ works around that by temporarily replacing `graph.query` with a wrapper that
 runs both guardrail functions on every Cypher string right before it's sent to
 Neo4j, then restores the original method in a `finally` block (so a blocked
 query, or any other error, never leaves `graph` permanently patched for later
-calls). See `GraphRAG.py` for the implementation.
+calls). See `rag/graph_rag.py` for the implementation.
 
 ## Not added yet
 

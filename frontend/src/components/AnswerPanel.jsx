@@ -142,13 +142,21 @@ function AnswerSheet({ result, asked }) {
 }
 
 function RichText({ text }) {
-  return parseInline(text).map((part, index) =>
-    part.bold ? (
-      <strong key={index} className="font-semibold text-gold-300">
-        {part.text}
-      </strong>
-    ) : (
-      <span key={index}>{part.text}</span>
-    )
-  );
+  return parseInline(text).map((part, index) => {
+    if (part.style === "bold") {
+      return (
+        <strong key={index} className="font-semibold text-gold-300">
+          {part.text}
+        </strong>
+      );
+    }
+    if (part.style === "italic") {
+      return (
+        <em key={index} className="text-parchment-200">
+          {part.text}
+        </em>
+      );
+    }
+    return <span key={index}>{part.text}</span>;
+  });
 }

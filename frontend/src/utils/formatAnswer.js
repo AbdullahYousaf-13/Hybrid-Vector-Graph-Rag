@@ -48,14 +48,23 @@ export function cleanChunk(chunk) {
     .replace(/^text:\s*/i, "");
 }
 
-/** Splits `**bold**` runs out of a string so they can be rendered as <strong>. */
+/**
+ * Splits `**bold**` and `*italic*` runs out of a string so they render as
+ * <strong>/<em> instead of leaking literal asterisks (the LLM writes both
+ * markdown-style; only ** was ever handled, so a lone *word* passed through
+ * as-is).
+ */
 export function parseInline(text) {
   return String(text)
-    .split(/(\*\*[^*]+\*\*)/g)
+    .split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g)
     .filter(Boolean)
-    .map((part) =>
-      part.startsWith("**") && part.endsWith("**")
-        ? { bold: true, text: part.slice(2, -2) }
-        : { bold: false, text: part }
-    );
+    .map((part) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return { style: "bold", text: part.slice(2, -2) };
+      }
+      if (part.startsWith("*") && part.endsWith("*")) {
+        return { style: "italic", text: part.slice(1, -1) };
+      }
+      return { style: null, text: part };
+    });
 }

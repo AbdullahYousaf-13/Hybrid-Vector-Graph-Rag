@@ -1,5 +1,4 @@
 import {
-  BookOpen,
   Layers,
   Network,
   PawPrint,
@@ -21,21 +20,21 @@ export const MODES = [
     tagline: "Semantic search over the book text",
     blurb: "Embeds the question, pulls the closest passages from the books, and answers from those.",
     icon: ScanSearch,
-    card: "border-ravenclaw/60 bg-ravenclaw/5 ring-1 ring-ravenclaw/25",
-    iconWrap: "bg-ravenclaw/10 text-ravenclaw",
-    accentText: "text-ravenclaw",
-    badge: "border-ravenclaw/30 bg-ravenclaw/10 text-ravenclaw",
+    card: "border-ravenclaw-light/45 border-l-4 border-l-ravenclaw-light bg-ravenclaw-light/10",
+    iconWrap: "border-ravenclaw-light/30 bg-ravenclaw-light/15 text-ravenclaw-light",
+    accentText: "text-ravenclaw-light",
+    badge: "border-ravenclaw-light/40 bg-ravenclaw-light/15 text-ravenclaw-light",
   },
   {
     id: "graph",
     label: "Graph",
     tagline: "Structured queries over the knowledge graph",
-    blurb: "Writes Cypher against the Neo4j graph — best for relationships and precise facts.",
+    blurb: "Writes Cypher against the Neo4j graph - best for relationships and precise facts.",
     icon: Network,
-    card: "border-slytherin/60 bg-slytherin/5 ring-1 ring-slytherin/25",
-    iconWrap: "bg-slytherin/10 text-slytherin",
-    accentText: "text-slytherin",
-    badge: "border-slytherin/30 bg-slytherin/10 text-slytherin",
+    card: "border-slytherin-light/45 border-l-4 border-l-slytherin-light bg-slytherin-light/10",
+    iconWrap: "border-slytherin-light/30 bg-slytherin-light/15 text-slytherin-light",
+    accentText: "text-slytherin-light",
+    badge: "border-slytherin-light/40 bg-slytherin-light/15 text-slytherin-light",
   },
   {
     id: "hybrid",
@@ -43,17 +42,17 @@ export const MODES = [
     tagline: "Both paths, reconciled into one answer",
     blurb: "Runs vector and graph retrieval, then reconciles the two answers. Costs up to 3 requests.",
     icon: Layers,
-    card: "border-gryffindor/60 bg-gryffindor/5 ring-1 ring-gryffindor/25",
-    iconWrap: "bg-gryffindor/10 text-gryffindor",
-    accentText: "text-gryffindor",
-    badge: "border-gryffindor/30 bg-gryffindor/10 text-gryffindor",
+    card: "border-gryffindor-light/45 border-l-4 border-l-gryffindor-light bg-gryffindor-light/10",
+    iconWrap: "border-gryffindor-light/30 bg-gryffindor-light/15 text-gryffindor-light",
+    accentText: "text-gryffindor-light",
+    badge: "border-gryffindor-light/40 bg-gryffindor-light/15 text-gryffindor-light",
   },
 ];
 
 export const DEFAULT_MODE = "hybrid";
 
 /**
- * "Ask Away" carries no presets — it is the free-form path and the default tab.
+ * "Ask Away" carries no presets; it is the free-form path and the default tab.
  * Every preset question below was verified against this backend.
  */
 export const CATEGORIES = [
@@ -61,7 +60,7 @@ export const CATEGORIES = [
     id: "ask-away",
     label: "Ask Away",
     icon: PencilLine,
-    hint: "No suggestions here — ask anything about the books below.",
+    hint: "No suggestions here - ask anything about the books below.",
     questions: [],
   },
   {
@@ -133,8 +132,6 @@ export const CATEGORIES = [
     ],
   },
 ];
-
-export const CORPUS_ICON = BookOpen;
 
 /** Backend guardrail: questions over 300 characters are rejected with a 400. */
 export const MAX_QUESTION_LENGTH = 300;

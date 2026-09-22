@@ -1,51 +1,229 @@
 @import "tailwindcss";
 
+/* Fan recreation of the film-title lettering, self-hosted (personal use). */
+@font-face {
+  font-family: "Harry Potter";
+  src: url("/fonts/harry-potter.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
+  /* Night */
+  --color-night-950: #07060b;
+  --color-night-900: #100d17;
+  --color-night-800: #1a1524;
+
   /* Parchment surfaces */
-  --color-parchment-50: #fdfbf4;
-  --color-parchment-100: #f8f3e6;
-  --color-parchment-200: #f1e8d4;
-  --color-parchment-300: #e3d6b8;
-  --color-parchment-400: #cdba92;
+  --color-parchment-50: #fbf5e6;
+  --color-parchment-100: #f4ebd3;
+  --color-parchment-200: #ebdfc0;
+  --color-parchment-300: #d9c79c;
+  --color-parchment-400: #bfa671;
 
-  /* Ink text */
-  --color-ink-900: #1c160f;
-  --color-ink-800: #2b2219;
-  --color-ink-600: #55483a;
-  --color-ink-400: #82735f;
+  /* Ink */
+  --color-ink-900: #1b140c;
+  --color-ink-800: #2a2015;
+  --color-ink-600: #55452f;
+  --color-ink-400: #7d6b52;
 
-  /* Accents */
+  /* Gold */
+  --color-gold-300: #e8c766;
   --color-gold-400: #d3a625;
   --color-gold-600: #9c7714;
 
-  /* Hogwarts houses */
+  /* Hogwarts houses: deep tones for fills, light tones for text on night */
   --color-gryffindor: #740001;
   --color-slytherin: #1a472a;
   --color-ravenclaw: #0e1a40;
   --color-hufflepuff: #ecb939;
+  --color-gryffindor-light: #e8706c;
+  --color-slytherin-light: #7fcf9a;
+  --color-ravenclaw-light: #8ea5e6;
 
+  /* Muted text on glass */
+  --color-mist: #b9ad93;
+
+  --font-title: "Harry Potter", "Cinzel Decorative", Georgia, serif;
   --font-display: "Cinzel", Georgia, serif;
   --font-body: "EB Garamond", Georgia, serif;
 }
 
+html {
+  background: var(--color-night-950);
+}
+
+/* Body stays transparent so the fixed .backdrop (z-index -1) shows through. */
 body {
   margin: 0;
   min-height: 100vh;
   font-family: var(--font-body);
-  color: var(--color-ink-800);
-  background-color: var(--color-parchment-100);
-  background-image:
-    radial-gradient(ellipse 70% 45% at 50% -5%, rgba(211, 166, 37, 0.16), transparent 70%),
-    radial-gradient(ellipse 50% 40% at 100% 100%, rgba(116, 0, 1, 0.06), transparent 70%),
-    radial-gradient(ellipse 50% 40% at 0% 85%, rgba(14, 26, 64, 0.06), transparent 70%);
-  background-attachment: fixed;
+  color: var(--color-parchment-100);
+  background: transparent;
 }
 
-/*
- * Swipeable on narrow screens, with no scrollbar chrome. Setting overflow-x
- * alone would force overflow-y to `auto` too, which is what put a stray
- * vertical scrollbar on the tab row.
- */
+/* ---------- Night-library backdrop ---------- */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.backdrop-photo {
+  position: absolute;
+  inset: -3%;
+  background: url("/img/library.jpg") center / cover no-repeat;
+  filter: blur(6px) brightness(0.36) saturate(0.7);
+}
+
+.backdrop-vignette {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 75% 70% at 50% 40%, rgba(7, 6, 11, 0.3) 0%, rgba(7, 6, 11, 0.6) 65%, rgba(7, 6, 11, 0.96) 100%),
+    linear-gradient(180deg, rgba(7, 6, 11, 0.6), rgba(7, 6, 11, 0.25) 32%, transparent 55%, rgba(7, 6, 11, 0.6));
+}
+
+.candle {
+  position: absolute;
+  width: 46vw;
+  height: 46vw;
+  max-width: 720px;
+  max-height: 720px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 190, 90, 0.11) 0%, rgba(255, 160, 60, 0.04) 35%, transparent 70%);
+  mix-blend-mode: screen;
+  opacity: 0.9;
+}
+
+.candle-1 {
+  top: -12%;
+  left: -8%;
+}
+.candle-2 {
+  top: 8%;
+  right: -12%;
+}
+.candle-3 {
+  bottom: -18%;
+  left: 30%;
+  width: 60vw;
+  height: 60vw;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .candle-1 {
+    animation: flicker 6.5s ease-in-out infinite;
+  }
+  .candle-2 {
+    animation: flicker 8s ease-in-out infinite 1.7s;
+  }
+  .candle-3 {
+    animation: flicker 7.2s ease-in-out infinite 3.1s;
+  }
+
+  .rise-in {
+    animation: rise-in 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+}
+
+@keyframes flicker {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  32% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  58% {
+    opacity: 0.78;
+    transform: scale(0.98);
+  }
+  80% {
+    opacity: 0.95;
+    transform: scale(1.02);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------- Smoked-glass panel ---------- */
+
+.panel {
+  position: relative;
+  isolation: isolate;
+  color: var(--color-parchment-100);
+  background:
+    radial-gradient(ellipse 120% 70% at 50% 0%, rgba(211, 166, 37, 0.07), transparent 60%),
+    linear-gradient(180deg, rgba(26, 21, 36, 0.78), rgba(12, 10, 18, 0.86));
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  border: 1px solid rgba(211, 166, 37, 0.32);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 6px rgba(211, 166, 37, 0.06),
+    inset 0 0 0 7px rgba(211, 166, 37, 0.18),
+    0 30px 60px -20px rgba(0, 0, 0, 0.85),
+    0 12px 28px -10px rgba(0, 0, 0, 0.6);
+}
+
+/* Fine grain so the glass reads as material rather than a flat fill. */
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.06;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>");
+  background-size: 240px 240px;
+}
+
+/* ---------- Typography helpers ---------- */
+
+/* Text that sits directly on the photo needs its own shadow to stay readable. */
+.legible {
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 2px 14px rgba(0, 0, 0, 0.75);
+}
+
+.title-glow {
+  text-shadow:
+    0 0 18px rgba(211, 166, 37, 0.35),
+    0 0 40px rgba(211, 166, 37, 0.18),
+    0 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+.drop-cap::first-letter {
+  float: left;
+  font-family: var(--font-display);
+  font-size: 3.4em;
+  line-height: 0.82;
+  padding: 0.08em 0.12em 0 0;
+  color: var(--color-gold-300);
+  text-shadow: 0 0 14px rgba(211, 166, 37, 0.35);
+}
+
+/* ---------- Scrolling helpers ---------- */
+
 .swipe-x {
   overflow-x: auto;
   overflow-y: hidden;
@@ -56,16 +234,15 @@ body {
   display: none;
 }
 
-/* Quietly themed scrollbars inside scrollable panels */
 .thin-scroll {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-parchment-400) transparent;
+  scrollbar-color: var(--color-mist) transparent;
 }
 .thin-scroll::-webkit-scrollbar {
   width: 8px;
 }
 .thin-scroll::-webkit-scrollbar-thumb {
-  background: var(--color-parchment-400);
+  background: rgba(185, 173, 147, 0.45);
   border-radius: 999px;
 }
 .thin-scroll::-webkit-scrollbar-track {

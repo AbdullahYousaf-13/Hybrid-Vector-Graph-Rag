@@ -6,6 +6,7 @@ import CategoryTabs from "./components/CategoryTabs.jsx";
 import Footer from "./components/Footer.jsx";
 import Header from "./components/Header.jsx";
 import ModeSelector from "./components/ModeSelector.jsx";
+import Panel from "./components/Panel.jsx";
 import QuestionForm from "./components/QuestionForm.jsx";
 
 export default function App() {
@@ -15,40 +16,50 @@ export default function App() {
 
   const loading = status === "loading";
 
-  // Suggestions only prefill the form — the user still presses Ask.
+  // Suggestions only prefill the form; the user still presses Ask.
   function handlePick(suggestion) {
     setQuestion(suggestion.text);
     setMode(suggestion.mode);
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <Header />
+    <>
+      <div className="backdrop" aria-hidden="true">
+        <div className="backdrop-photo" />
+        <div className="backdrop-vignette" />
+        <div className="candle candle-1" />
+        <div className="candle candle-2" />
+        <div className="candle candle-3" />
+      </div>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 sm:px-6">
-        <div className="space-y-5 rounded-2xl border border-parchment-300 bg-parchment-50/70 p-4 shadow-sm sm:p-6">
-          <CategoryTabs onPick={handlePick} disabled={loading} />
-          <ModeSelector value={mode} onChange={setMode} disabled={loading} />
-          <QuestionForm
-            question={question}
-            onQuestionChange={setQuestion}
-            onSubmit={() => ask(question.trim(), mode)}
-            loading={loading}
-          />
-        </div>
+      <div className="flex min-h-screen flex-col">
+        <Header />
 
-        <div className="mt-5">
-          <AnswerPanel
-            status={status}
-            result={result}
-            error={error}
-            asked={asked}
-            elapsed={elapsed}
-          />
-        </div>
-      </main>
+        <main className="mx-auto w-full max-w-3xl flex-1 px-4 sm:px-6">
+          <Panel className="space-y-6">
+            <CategoryTabs onPick={handlePick} disabled={loading} />
+            <ModeSelector value={mode} onChange={setMode} disabled={loading} />
+            <QuestionForm
+              question={question}
+              onQuestionChange={setQuestion}
+              onSubmit={() => ask(question.trim(), mode)}
+              loading={loading}
+            />
+          </Panel>
 
-      <Footer />
-    </div>
+          <div className="mt-6">
+            <AnswerPanel
+              status={status}
+              result={result}
+              error={error}
+              asked={asked}
+              elapsed={elapsed}
+            />
+          </div>
+        </main>
+
+        <Footer />
+      </div>
+    </>
   );
 }

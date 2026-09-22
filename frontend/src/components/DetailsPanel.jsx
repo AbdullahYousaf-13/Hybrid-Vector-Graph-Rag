@@ -17,12 +17,12 @@ export default function DetailsPanel({ details }) {
   if (!cypher && !(Array.isArray(chunks) && chunks.length > 0)) return null;
 
   return (
-    <div className="mt-5 border-t border-parchment-300 pt-4">
+    <div className="mt-5 border-t border-gold-400/20 pt-4">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 -ml-2 font-display text-xs tracking-wide text-ink-600 uppercase transition hover:text-ink-900 focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:outline-none"
+        className="inline-flex items-center gap-1.5 rounded-sm px-2 py-1 -ml-2 font-display text-[11px] font-semibold tracking-[0.2em] text-gold-400/85 uppercase transition hover:text-gold-300 focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:outline-none"
       >
         <ChevronDown
           className={cx("size-4 transition-transform", open && "rotate-180")}
@@ -35,11 +35,11 @@ export default function DetailsPanel({ details }) {
         <div className="mt-3 space-y-4">
           {cypher && (
             <section>
-              <h3 className="mb-1.5 flex items-center gap-1.5 text-xs tracking-wide text-ink-400 uppercase">
+              <h3 className="mb-1.5 flex items-center gap-1.5 font-display text-[10px] font-semibold tracking-[0.18em] text-mist uppercase">
                 <Code2 className="size-3.5" aria-hidden="true" />
                 Generated Cypher
               </h3>
-              <pre className="thin-scroll overflow-x-auto overflow-y-hidden rounded-lg border border-parchment-300 bg-ink-900 p-3 font-mono text-xs leading-relaxed text-parchment-200">
+              <pre className="thin-scroll overflow-x-auto overflow-y-hidden rounded-sm border border-gold-400/15 bg-night-950/70 p-3.5 font-mono text-xs leading-relaxed text-parchment-200 shadow-[inset_0_2px_10px_rgba(0,0,0,0.6)]">
                 {cypher}
               </pre>
             </section>
@@ -47,7 +47,7 @@ export default function DetailsPanel({ details }) {
 
           {Array.isArray(chunks) && chunks.length > 0 && (
             <section>
-              <h3 className="mb-1.5 flex items-center gap-1.5 text-xs tracking-wide text-ink-400 uppercase">
+              <h3 className="mb-1.5 flex items-center gap-1.5 font-display text-[10px] font-semibold tracking-[0.18em] text-mist uppercase">
                 <FileText className="size-3.5" aria-hidden="true" />
                 Retrieved chunks ({chunks.length})
               </h3>
@@ -55,12 +55,12 @@ export default function DetailsPanel({ details }) {
                 {chunks.map((chunk, index) => (
                   <li
                     key={index}
-                    className="rounded-lg border border-parchment-300 bg-parchment-50/80 p-3"
+                    className="rounded-sm border border-gold-400/15 bg-white/[0.04] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
                   >
-                    <span className="mb-1 inline-block rounded bg-parchment-200 px-1.5 py-0.5 font-mono text-[10px] text-ink-600">
+                    <span className="mb-1 inline-block rounded-sm border border-gold-400/25 bg-white/[0.06] px-1.5 py-0.5 font-display text-[10px] font-semibold text-gold-300">
                       #{index + 1}
                     </span>
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap text-ink-600">
+                    <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-parchment-200/85">
                       {cleanChunk(chunk)}
                     </p>
                   </li>

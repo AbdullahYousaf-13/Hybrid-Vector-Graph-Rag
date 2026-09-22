@@ -1,30 +1,33 @@
-import { BookOpen } from "lucide-react";
-import HouseStripe from "./HouseStripe.jsx";
+import HouseRibbon from "./HouseRibbon.jsx";
+import { Divider } from "./Ornament.jsx";
 
 export default function Header() {
   return (
     <header>
-      <HouseStripe className="h-1.5" />
+      <HouseRibbon className="pt-3" />
 
-      <div className="mx-auto max-w-3xl px-4 pt-8 pb-6 text-center sm:px-6 sm:pt-12">
-        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-parchment-300 bg-parchment-50/70 px-3 py-1 text-xs tracking-wide text-ink-600 uppercase">
-          <BookOpen className="size-3.5 text-gold-600" aria-hidden="true" />
-          All seven books
-        </div>
+      <div className="mx-auto max-w-3xl px-4 pt-10 pb-8 text-center sm:px-6 sm:pt-14">
+        <img
+          src="/img/hogwarts-crest.webp"
+          alt=""
+          width="512"
+          height="512"
+          className="mx-auto h-28 w-28 drop-shadow-[0_10px_24px_rgba(0,0,0,0.7)] sm:h-36 sm:w-36"
+        />
 
-        <h1 className="font-display text-3xl leading-tight font-bold text-ink-900 sm:text-4xl">
+        <p className="legible mt-6 font-display text-[11px] font-semibold tracking-[0.35em] text-gold-300 uppercase">
+          Hybrid Vector + Graph RAG
+        </p>
+
+        <h1 className="title-glow mt-5 font-title text-5xl leading-[1.1] text-gold-300 sm:text-6xl md:text-7xl">
           The Hogwarts Archive
         </h1>
 
-        <div className="my-4 flex items-center justify-center gap-3" aria-hidden="true">
-          <span className="h-px w-16 bg-gradient-to-r from-transparent to-gold-400 sm:w-24" />
-          <span className="size-1.5 rotate-45 bg-gold-400" />
-          <span className="h-px w-16 bg-gradient-to-l from-transparent to-gold-400 sm:w-24" />
-        </div>
+        <Divider className="mx-auto mt-5 w-64 text-gold-400 sm:w-80" />
 
-        <p className="mx-auto max-w-xl text-lg text-ink-600">
-          A hybrid <span className="text-ink-900">vector + graph</span> retrieval system over the
-          Harry Potter corpus. Ask a question, choose how it should be answered, and see exactly
+        <p className="legible mx-auto mt-5 max-w-xl font-body text-[17px] leading-relaxed text-parchment-300 italic">
+          Seven volumes, one archive. Ask a question and choose how it should be answered -
+          by searching the text, querying the knowledge graph, or both - and see exactly
           what the retriever found.
         </p>
       </div>

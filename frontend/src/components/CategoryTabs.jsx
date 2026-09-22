@@ -4,7 +4,7 @@ import { cx } from "../utils/cx.js";
 
 /**
  * Tabs of suggested questions. The first tab ("Ask Away") intentionally has no
- * presets — it's the free-form path. Picking a suggestion only fills the
+ * presets; it's the free-form path. Picking a suggestion only fills the
  * question box and switches the mode; it never sends the request.
  */
 export default function CategoryTabs({ onPick, disabled }) {
@@ -16,7 +16,7 @@ export default function CategoryTabs({ onPick, disabled }) {
       <div
         role="tablist"
         aria-label="Question categories"
-        className="swipe-x flex gap-1 border-b border-parchment-300"
+        className="swipe-x flex gap-1 border-b border-gold-400/20"
       >
         {CATEGORIES.map((category) => {
           const Icon = category.icon;
@@ -30,11 +30,11 @@ export default function CategoryTabs({ onPick, disabled }) {
               aria-selected={isActive}
               onClick={() => setActiveId(category.id)}
               className={cx(
-                "-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 font-display text-xs tracking-wide whitespace-nowrap uppercase transition",
+                "-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2 font-display text-[11px] font-semibold tracking-[0.06em] whitespace-nowrap uppercase transition",
                 "focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:outline-none",
                 isActive
-                  ? "border-gold-400 text-ink-900"
-                  : "border-transparent text-ink-400 hover:text-ink-600"
+                  ? "border-gold-400 text-gold-300"
+                  : "border-transparent text-mist/80 hover:text-parchment-100"
               )}
             >
               <Icon className="size-3.5" aria-hidden="true" />
@@ -46,7 +46,7 @@ export default function CategoryTabs({ onPick, disabled }) {
 
       <div className="pt-3">
         {active.questions.length === 0 ? (
-          <p className="py-1 text-sm text-ink-400 italic">{active.hint}</p>
+          <p className="py-1 text-mist italic">{active.hint}</p>
         ) : (
           <ul className="flex flex-wrap gap-2">
             {active.questions.map((question) => {
@@ -59,16 +59,17 @@ export default function CategoryTabs({ onPick, disabled }) {
                     disabled={disabled}
                     onClick={() => onPick(question)}
                     className={cx(
-                      "flex items-center gap-2 rounded-full border border-parchment-300 bg-parchment-50/70 px-3 py-1.5 text-sm text-ink-800 transition",
-                      "hover:border-gold-400 hover:bg-parchment-50",
+                      "flex items-center gap-2 rounded-full border border-gold-400/25 bg-white/[0.04] px-3 py-1.5 text-[15px] text-parchment-100 transition",
+                      "shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]",
+                      "hover:border-gold-400/70 hover:bg-white/[0.08] hover:shadow-[0_0_0_1px_rgba(211,166,37,0.25),0_0_18px_-6px_rgba(211,166,37,0.5)]",
                       "focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:outline-none",
-                      disabled && "cursor-not-allowed opacity-50 hover:border-parchment-300"
+                      disabled && "cursor-not-allowed opacity-50 hover:border-gold-400/25 hover:bg-white/[0.04] hover:shadow-none"
                     )}
                   >
                     {question.text}
                     <span
                       className={cx(
-                        "rounded-full border px-1.5 py-px text-[10px] tracking-wide uppercase",
+                        "rounded-full border px-1.5 py-px font-display text-[9px] font-semibold tracking-wider uppercase",
                         mode?.badge
                       )}
                     >

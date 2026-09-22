@@ -1,5 +1,6 @@
-import { Loader2, Send } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { MAX_QUESTION_LENGTH } from "../constants.js";
+import { WaxSeal } from "./Ornament.jsx";
 import { cx } from "../utils/cx.js";
 
 export default function QuestionForm({ question, onQuestionChange, onSubmit, loading }) {
@@ -19,9 +20,15 @@ export default function QuestionForm({ question, onQuestionChange, onSubmit, loa
     }
   }
 
+  const kbd =
+    "rounded-sm border border-gold-400/25 bg-white/[0.06] px-1 py-0.5 font-sans text-xs text-parchment-200";
+
   return (
     <form onSubmit={handleSubmit} className="min-w-0">
-      <label htmlFor="question" className="sr-only">
+      <label
+        htmlFor="question"
+        className="mb-2.5 block font-display text-[11px] font-semibold tracking-[0.2em] text-gold-400/85 uppercase"
+      >
         Your question
       </label>
 
@@ -35,42 +42,39 @@ export default function QuestionForm({ question, onQuestionChange, onSubmit, loa
         onKeyDown={handleKeyDown}
         placeholder="e.g. What does the invisibility cloak do?"
         className={cx(
-          "w-full resize-y rounded-xl border border-parchment-300 bg-parchment-50 px-4 py-3 text-lg text-ink-900 shadow-inner transition",
-          "placeholder:text-ink-400/80",
-          "focus:border-gold-400 focus:ring-2 focus:ring-gold-400/40 focus:outline-none",
+          "w-full resize-y rounded-sm border border-gold-400/25 bg-night-950/60 px-4 py-2.5 text-lg text-parchment-50 transition",
+          "shadow-[inset_0_2px_10px_rgba(0,0,0,0.45)]",
+          "placeholder:text-mist/60 placeholder:italic",
+          "focus:border-gold-400/70 focus:ring-2 focus:ring-gold-400/30 focus:outline-none",
           "disabled:opacity-70"
         )}
       />
 
-      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-ink-400">
-          <kbd className="rounded border border-parchment-300 bg-parchment-200 px-1 py-0.5 font-sans">
-            Ctrl
-          </kbd>{" "}
-          +{" "}
-          <kbd className="rounded border border-parchment-300 bg-parchment-200 px-1 py-0.5 font-sans">
-            Enter
-          </kbd>{" "}
-          to ask · {question.length}/{MAX_QUESTION_LENGTH} characters
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-mist">
+          <kbd className={kbd}>Ctrl</kbd> + <kbd className={kbd}>Enter</kbd> to ask ·{" "}
+          {question.length}/{MAX_QUESTION_LENGTH} characters
         </p>
 
         <button
           type="submit"
           disabled={!canSubmit}
           className={cx(
-            "inline-flex items-center gap-2 rounded-xl border border-gryffindor bg-gryffindor px-5 py-2.5 font-display text-sm font-semibold tracking-wide text-hufflepuff shadow-sm transition",
-            "hover:bg-gryffindor/90 focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:ring-offset-2 focus-visible:ring-offset-parchment-100 focus-visible:outline-none",
-            "disabled:cursor-not-allowed disabled:opacity-50"
+            "inline-flex items-center gap-2.5 rounded-sm border border-gold-400/50 bg-gryffindor py-2 pr-5 pl-2.5 font-display text-[13px] font-bold tracking-[0.14em] text-gold-300 uppercase transition",
+            "shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_8px_20px_-8px_rgba(0,0,0,0.8),0_0_24px_-8px_rgba(211,166,37,0.35)]",
+            "hover:border-gold-300/80 hover:bg-[#8a0002]",
+            "focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:ring-offset-2 focus-visible:ring-offset-night-900 focus-visible:outline-none",
+            "disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none"
           )}
         >
           {loading ? (
             <>
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              <Loader2 className="size-6 animate-spin" aria-hidden="true" />
               Asking…
             </>
           ) : (
             <>
-              <Send className="size-4" aria-hidden="true" />
+              <WaxSeal className="size-6 drop-shadow" />
               Ask
             </>
           )}

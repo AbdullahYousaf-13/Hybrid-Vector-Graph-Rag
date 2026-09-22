@@ -3,62 +3,48 @@ import { MODES } from "../constants.js";
 import { parseAnswer, parseInline } from "../utils/formatAnswer.js";
 import { cx } from "../utils/cx.js";
 import DetailsPanel from "./DetailsPanel.jsx";
+import Panel from "./Panel.jsx";
 
 export default function AnswerPanel({ status, result, error, asked, elapsed }) {
   if (status === "idle") return <IdleState />;
   if (status === "loading") return <LoadingState elapsed={elapsed} asked={asked} />;
   if (status === "error") return <ErrorState error={error} />;
-  if (status === "success" && result) return <AnswerCard result={result} asked={asked} />;
+  if (status === "success" && result) return <AnswerSheet result={result} asked={asked} />;
   return null;
 }
 
-function Shell({ className, children }) {
-  return (
-    <div
-      className={cx(
-        "rounded-2xl border border-parchment-300 bg-parchment-50/85 p-5 shadow-sm backdrop-blur-[1px] sm:p-6",
-        className
-      )}
-    >
-      {children}
-    </div>
-  );
-}
+const label = "font-display text-[11px] font-semibold tracking-[0.22em] uppercase";
 
 function IdleState() {
   return (
-    <Shell className="border-dashed bg-parchment-50/50 text-center">
-      <Sparkles className="mx-auto size-6 text-gold-400" aria-hidden="true" />
-      <p className="mt-2 font-display text-sm tracking-wide text-ink-600 uppercase">
-        The archive is listening
-      </p>
-      <p className="mt-1 text-ink-400">
+    <Panel className="py-8 text-center sm:py-10">
+      <Sparkles className="mx-auto size-7 text-gold-400 drop-shadow-[0_0_10px_rgba(211,166,37,0.55)]" aria-hidden="true" />
+      <p className={cx(label, "mt-4 text-gold-300")}>The archive is listening</p>
+      <p className="mt-2 text-lg text-mist">
         Pick a suggestion or write your own question, then press Ask.
       </p>
-    </Shell>
+    </Panel>
   );
 }
 
 function LoadingState({ elapsed, asked }) {
   return (
-    <Shell>
-      <div className="flex items-center gap-2 text-ink-600">
-        <Loader2 className="size-4 animate-spin text-gold-600" aria-hidden="true" />
-        <span className="font-display text-sm tracking-wide uppercase">
+    <Panel className="rise-in">
+      <div className="flex items-center gap-2.5">
+        <Loader2 className="size-4 animate-spin text-gold-400" aria-hidden="true" />
+        <span className={cx(label, "text-gold-300")}>
           Consulting the archive… {elapsed.toFixed(1)}s
         </span>
       </div>
 
-      {asked?.question && (
-        <p className="mt-3 text-ink-400 italic">“{asked.question}”</p>
-      )}
+      {asked?.question && <p className="mt-3 text-lg text-mist italic">“{asked.question}”</p>}
 
-      <div className="mt-4 space-y-2" aria-hidden="true">
-        <div className="h-3 w-full animate-pulse rounded bg-parchment-200" />
-        <div className="h-3 w-11/12 animate-pulse rounded bg-parchment-200" />
-        <div className="h-3 w-8/12 animate-pulse rounded bg-parchment-200" />
+      <div className="mt-5 space-y-2.5" aria-hidden="true">
+        <div className="h-3 w-full animate-pulse rounded-sm bg-white/[0.07]" />
+        <div className="h-3 w-11/12 animate-pulse rounded-sm bg-white/[0.07]" />
+        <div className="h-3 w-8/12 animate-pulse rounded-sm bg-white/[0.07]" />
       </div>
-    </Shell>
+    </Panel>
   );
 }
 
@@ -70,38 +56,38 @@ function ErrorState({ error }) {
       : status === 400
         ? "Adjust the question and try again."
         : status === 0
-          ? "The API isn't reachable — check that the backend process is running."
+          ? "The API isn't reachable - check that the backend process is running."
           : "Try again, or check the backend logs for details.";
 
   return (
-    <Shell className="border-gryffindor/40 bg-gryffindor/5">
+    <Panel className="rise-in">
       <div className="flex items-start gap-3">
-        <AlertTriangle className="mt-0.5 size-5 shrink-0 text-gryffindor" aria-hidden="true" />
+        <AlertTriangle className="mt-0.5 size-5 shrink-0 text-gryffindor-light" aria-hidden="true" />
         <div className="min-w-0">
-          <p className="font-display text-sm font-semibold tracking-wide text-gryffindor uppercase">
+          <p className={cx(label, "text-gryffindor-light")}>
             {status ? `Request failed (${status})` : "Request failed"}
           </p>
-          <p className="mt-1 break-words text-ink-800">{error?.message}</p>
-          <p className="mt-2 text-sm text-ink-400">{hint}</p>
+          <p className="mt-1.5 text-lg break-words text-parchment-100">{error?.message}</p>
+          <p className="mt-2 text-mist">{hint}</p>
         </div>
       </div>
-    </Shell>
+    </Panel>
   );
 }
 
-function AnswerCard({ result, asked }) {
+function AnswerSheet({ result, asked }) {
   const mode = MODES.find((m) => m.id === asked?.mode);
   const blocks = parseAnswer(result.answer);
   const quota = result.quota;
   const quotaPercent = quota?.max ? Math.min(100, (quota.used / quota.max) * 100) : 0;
 
   return (
-    <Shell>
-      <div className="flex flex-wrap items-center gap-2">
+    <Panel className="rise-in">
+      <div className="flex flex-wrap items-center gap-3">
         {mode && (
           <span
             className={cx(
-              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-display text-[11px] tracking-wide uppercase",
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-display text-[10px] font-bold tracking-[0.14em] uppercase",
               mode.badge
             )}
           >
@@ -109,16 +95,16 @@ function AnswerCard({ result, asked }) {
             {mode.label}
           </span>
         )}
-        <p className="min-w-0 flex-1 text-ink-400 italic">“{asked?.question}”</p>
+        <p className="min-w-0 flex-1 text-lg text-mist italic">“{asked?.question}”</p>
       </div>
 
-      <div className="mt-4 space-y-3 text-lg leading-relaxed text-ink-900">
+      <div className="mt-5 space-y-3.5 text-[19px] leading-[1.6] text-parchment-50">
         {blocks.map((block, index) =>
           block.type === "list" ? (
-            <ul key={index} className="space-y-1.5 pl-1">
+            <ul key={index} className="space-y-2 pl-1">
               {block.items.map((item, itemIndex) => (
-                <li key={itemIndex} className="flex gap-2">
-                  <span className="mt-2.5 size-1.5 shrink-0 rotate-45 bg-gold-400" aria-hidden="true" />
+                <li key={itemIndex} className="flex gap-2.5">
+                  <span className="mt-3 size-1.5 shrink-0 rotate-45 bg-gold-400" aria-hidden="true" />
                   <span>
                     <RichText text={item} />
                   </span>
@@ -126,14 +112,14 @@ function AnswerCard({ result, asked }) {
               ))}
             </ul>
           ) : (
-            <p key={index}>
+            <p key={index} className={cx(index === 0 && "drop-cap")}>
               <RichText text={block.text} />
             </p>
           )
         )}
       </div>
 
-      <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-parchment-300 pt-3 text-xs text-ink-400">
+      <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-gold-400/20 pt-3.5 text-sm text-mist">
         <span className="inline-flex items-center gap-1.5">
           <Clock className="size-3.5" aria-hidden="true" />
           Answered in {result.time_seconds}s
@@ -143,25 +129,22 @@ function AnswerCard({ result, asked }) {
           <span className="inline-flex items-center gap-1.5">
             <Gauge className="size-3.5" aria-hidden="true" />
             {quota.used}/{quota.max} requests used today
-            <span className="ml-1 h-1 w-16 overflow-hidden rounded-full bg-parchment-300">
-              <span
-                className="block h-full bg-gold-400"
-                style={{ width: `${quotaPercent}%` }}
-              />
+            <span className="ml-1 h-1 w-16 overflow-hidden rounded-full bg-white/10">
+              <span className="block h-full bg-gold-400" style={{ width: `${quotaPercent}%` }} />
             </span>
           </span>
         )}
       </div>
 
       <DetailsPanel details={result.details} />
-    </Shell>
+    </Panel>
   );
 }
 
 function RichText({ text }) {
   return parseInline(text).map((part, index) =>
     part.bold ? (
-      <strong key={index} className="font-semibold text-ink-900">
+      <strong key={index} className="font-semibold text-gold-300">
         {part.text}
       </strong>
     ) : (

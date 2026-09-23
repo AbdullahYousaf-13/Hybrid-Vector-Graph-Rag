@@ -26,8 +26,8 @@ export default function Header() {
         <Divider className="mx-auto mt-5 w-64 text-gold-400 sm:w-80" />
 
         <p className="legible mx-auto mt-5 max-w-xl font-body text-[17px] leading-relaxed text-parchment-300 italic">
-          Seven volumes, one archive. Ask a question and choose how it should be answered -
-          by searching the text, querying the knowledge graph, or both - and see exactly
+          Seven volumes, one archive. Ask a question and choose how it should be answered:
+          by searching the text, querying the knowledge graph, or both, and see exactly
           what the retriever found.
         </p>
       </div>

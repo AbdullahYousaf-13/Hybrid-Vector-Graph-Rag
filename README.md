@@ -19,7 +19,8 @@ backend/        FastAPI HTTP API in front of rag/
 frontend/       Vite + React + Tailwind web UI (self-hosted fonts/images in public/)
 data/           source corpus (Book_*.json)
 docs/           Living_Specs.md (full spec), Flow.md (step-by-step + diagrams),
-                Guardrails.md (security/cost guardrails)
+                Guardrails.md (security/cost guardrails), QA_Prep.md (function-level
+                call-chain reference for rag/ and KG/)
 main.ipynb      notebook entry point for querying (mirrors backend/app.py)
 prep.ipynb      one-time ingestion pipeline
 Dockerfile      builds the frontend, then serves it from the API (one service)

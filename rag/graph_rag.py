@@ -60,6 +60,12 @@ Instructions:
   RETURN child.name AS child
 - If you use UNION, every part must RETURN exactly the same column names in the same order. Always alias
   columns with AS (e.g. RETURN killer.name AS name, type(r) AS relation).
+- For questions about who or what is connected to an entity, match the relationship with NO direction
+  (-[r]-), because extracted relationships are sometimes stored backwards, skip MENTIONED_IN (it only links
+  to text chunks), and return DISTINCT rows, e.g.:
+  MATCH (e:Entity)-[r]-(other:Entity) WHERE toLower(e.name) CONTAINS toLower("<name from question>")
+    AND type(r) <> "MENTIONED_IN"
+  RETURN DISTINCT other.name AS name, type(r) AS relation, e.name AS entity
 - Return entity names and relationship types, not Chunk text. Only return Chunk text when the question asks
   what happens in a book or asks for a passage.
 - Return only the Cypher query, with no explanation, apologies, or markdown fences.
@@ -161,7 +167,7 @@ def generate_cypher_query(
         qa_prompt=qa_prompt,
         allow_dangerous_requests=True,
         return_intermediate_steps=True,
-        top_k=5,
+        top_k=15,
         exclude_types=[QUOTA_LABEL],
     )
 

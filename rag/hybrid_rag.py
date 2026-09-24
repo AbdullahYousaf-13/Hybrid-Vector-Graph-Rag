@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
 import re
+import time
 
+from rag.answer import clean_answer
 from rag.quota import QuotaExceededError, daily_limiter
 from rag.vector_rag import query_vector_rag
 from rag.graph_rag import generate_cypher_query
@@ -25,8 +27,10 @@ HYBRID_SYNTHESIS_TEMPLATE = """You are answering a question about {domain_descri
 answers, each produced by a different retrieval system: one searched raw source text, the other queried a
 structured knowledge graph. Either may be wrong, incomplete, or may not have found an answer at all.
 
-- If both answers agree, synthesize one concise combined answer using any complementary detail from each —
-  don't just repeat one verbatim, and don't invent anything neither answer actually stated.
+- Use ONLY facts stated in the two answers. Never add names, events, or details from your own background
+  knowledge, even if you are sure they are true.
+- If both answers agree or complement each other, merge them into one concise answer that keeps every
+  distinct fact from both (e.g. combine two partial lists into one list without duplicates).
 - If one answer clearly declines or says it doesn't know, and the other has a real answer, use the real
   answer — do not mention that the other system failed to answer.
 - If the two answers genuinely conflict, say so explicitly: briefly state what each source claims, and do
@@ -71,13 +75,19 @@ def _synthesize(question: str, vector_answer: str, graph_answer: str, domain_des
     )
 
     chain = prompt | llm | StrOutputParser()
-    result = chain.invoke({
+    inputs = {
         "domain_description": domain_description,
         "question": question,
         "vector_answer": vector_answer,
         "graph_answer": graph_answer,
-    })
-    return result.strip()
+    }
+    try:
+        result = chain.invoke(inputs)
+    except Exception as e:
+        logger.warning("Hybrid: synthesis failed, retrying once", exc_info=e)
+        time.sleep(3)
+        result = chain.invoke(inputs)
+    return clean_answer(result)
 
 
 _DECLINE = re.compile(r"^\W*i\s+(do\s+not|don't|don’t)\s+know", re.IGNORECASE)

@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import os
 import re
 
+from rag.answer import clean_answer
 from rag.quota import daily_limiter
 
 load_dotenv()
@@ -87,6 +88,6 @@ def query_vector_rag(
     result = chain.invoke({"context": context, "input": sanitized_question})
 
     return {
-        "answer": result.strip(),
+        "answer": clean_answer(result),
         "chunks": [d.page_content for d in docs],
     }

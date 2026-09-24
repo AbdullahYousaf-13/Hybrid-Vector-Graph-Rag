@@ -330,7 +330,9 @@ question
   -> only one succeeded? -> return it directly, prefixed "(<other> unavailable — ...)"
   -> one side answered "I don't know"? -> return the other answer, no synthesis call
   -> both succeeded -> HYBRID_SYNTHESIS_TEMPLATE | gemini-3.1-flash-lite | StrOutputParser
-       -> synthesis itself fails? -> fall back to showing both raw answers
+       -> synthesis fails? -> retry once after 3s (Gemini 503s are usually brief)
+       -> fails again? -> fall back to showing both answers under headings
+  -> every answer passes through rag/answer.py clean_answer (drops "Based on the provided text," openers)
   -> answer (model's text as-is, line breaks kept)
 ```
 

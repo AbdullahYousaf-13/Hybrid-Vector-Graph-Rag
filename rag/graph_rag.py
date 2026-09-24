@@ -4,6 +4,7 @@ from langchain_core.prompts import PromptTemplate
 from neo4j.exceptions import CypherSyntaxError
 import re
 
+from rag.answer import clean_answer
 from rag.quota import QUOTA_LABEL, daily_limiter
 
 
@@ -181,6 +182,6 @@ def generate_cypher_query(
     cypher_query = intermediate_steps[0].get("query", "") if intermediate_steps else ""
 
     return {
-        "answer": raw_result.strip(),
+        "answer": clean_answer(raw_result),
         "cypher_query": cypher_query,
     }

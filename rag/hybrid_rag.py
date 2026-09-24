@@ -1,59 +1,14 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
+from concurrent.futures import ThreadPoolExecutor
 import textwrap
 import os
 import re
-import json
-import datetime
-from pathlib import Path
 
+from rag.quota import daily_limiter
 from rag.vector_rag import query_vector_rag
 from rag.graph_rag import generate_cypher_query
-
-
-class PersistentDailyQuotaTracker:
-    """
-    Shared, persistent daily quota tracker backed by a local JSON file.
-    Survives Jupyter kernel restarts and shares state across modules.
-    """
-    def __init__(self, state_file=".daily_quota.json", max_rpd: int = 250):
-        self.state_file = Path(state_file)
-        self.max_rpd = max_rpd
-
-    def _load_state(self) -> int:
-        today_str = datetime.date.today().isoformat()
-        if self.state_file.exists():
-            try:
-                data = json.loads(self.state_file.read_text())
-                if data.get("date") == today_str:
-                    return data.get("count", 0)
-            except Exception:
-                pass
-        return 0
-
-    def _save_state(self, count: int):
-        today_str = datetime.date.today().isoformat()
-        data = {"date": today_str, "count": count}
-        self.state_file.write_text(json.dumps(data))
-
-    def check_and_increment(self):
-        current_count = self._load_state()
-        if current_count >= self.max_rpd:
-            raise RuntimeError(
-                f"Daily Quota Guardrail Triggered: Max daily limit of {self.max_rpd} "
-                f"requests reached ({current_count}/{self.max_rpd}). Resets tomorrow."
-            )
-        new_count = current_count + 1
-        self._save_state(new_count)
-        print(f"[Shared Daily Quota] Total requests used today: {new_count}/{self.max_rpd}")
-
-
-# Resolved from this file rather than the process's working directory, so the
-# counter lands in the same place no matter where the app is started from.
-QUOTA_FILE = Path(__file__).resolve().parent.parent / ".daily_quota.json"
-
-daily_limiter = PersistentDailyQuotaTracker(state_file=QUOTA_FILE, max_rpd=250)
 
 
 def _validate_and_sanitize_question(question: str) -> str:
@@ -107,6 +62,8 @@ def _synthesize(question: str, vector_answer: str, graph_answer: str, domain_des
         model="gemini-3.5-flash-lite",
         temperature=0,
         google_api_key=os.getenv("GEMINI_API_KEY"),
+        max_retries=1,
+        timeout=30,
     )
 
     chain = prompt | llm | StrOutputParser()
@@ -117,6 +74,13 @@ def _synthesize(question: str, vector_answer: str, graph_answer: str, domain_des
         "graph_answer": graph_answer,
     })
     return textwrap.fill(result, 60)
+
+
+def _run(fn, *args):
+    try:
+        return fn(*args), None
+    except Exception as e:
+        return None, e
 
 
 def query_hybrid_rag(
@@ -142,25 +106,15 @@ def query_hybrid_rag(
     """
     sanitized_question = _validate_and_sanitize_question(question)
 
-    vector_result = None
-    vector_error = None
-    try:
-        vector_result = query_vector_rag(
-            sanitized_question,
-            vector_index_name,
-            vector_node_label,
-            vector_source_property,
-            vector_embedding_property,
+    # Run both retrievals at once: total wait is the slower one, not both added up.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        vector_future = pool.submit(
+            _run, query_vector_rag, sanitized_question,
+            vector_index_name, vector_node_label, vector_source_property, vector_embedding_property,
         )
-    except Exception as e:
-        vector_error = e
-
-    graph_result = None
-    graph_error = None
-    try:
-        graph_result = generate_cypher_query(sanitized_question, graph)
-    except Exception as e:
-        graph_error = e
+        graph_future = pool.submit(_run, generate_cypher_query, sanitized_question, graph)
+        vector_result, vector_error = vector_future.result()
+        graph_result, graph_error = graph_future.result()
 
     if vector_result is None and graph_result is None:
         raise RuntimeError(

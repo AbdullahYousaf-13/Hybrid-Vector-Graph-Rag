@@ -11,6 +11,7 @@ process, so there is one origin and no CORS involved.
 import sys
 import time
 import json
+import logging
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -88,6 +89,7 @@ def query(request: QueryRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=429, detail=str(e))
     except Exception:
+        logging.getLogger("uvicorn.error").exception("Query failed (mode=%s)", request.mode)
         raise HTTPException(status_code=500, detail="Internal error while answering the question.")
 
 

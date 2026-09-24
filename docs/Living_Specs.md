@@ -28,7 +28,7 @@ two paths are callable but invoked separately (see §8).
 | ------------------ | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
 | Graph DB          | **Neo4j Aura Free** (instance `HVGR`, id `3663f87a`)              | DB name **and** username are both `3663f87a`, not `neo4j` — set via `NEO4J_DATABASE`    |
 | Embeddings        | **Gemini** `gemini-embedding-001`, 768 dims                       | computed in Python, L2-normalized; free tier                                            |
-| Chat / Cypher LLM | **Gemini** `gemini-3.5-flash-lite`                                 | free tier, cheaper/faster tier chosen as a cost guardrail; ignores `temperature`; returns `content` as a list → needs `StrOutputParser` |
+| Chat / Cypher LLM | **Gemini** `gemini-3.1-flash-lite`                                 | free tier (15/min, 500/day, the highest free text-model limits); chosen over `gemini-3.5-flash-lite` because it respects `temperature=0`, so the same question gets the same Cypher and answer (3.5 Flash-Lite and newer models ignore temperature); returns `content` as a list → needs `StrOutputParser` |
 | Orchestration     | **LangChain v1.4** + `langchain-neo4j` + `langchain-google-genai` | `langchain.chains` no longer exists; chains built with LCEL (`prompt \| llm \| parser`)   |
 | Chunking          | `RecursiveCharacterTextSplitter`                                  | `chunk_size=2000`, `chunk_overlap=200`                                                  |
 
@@ -91,7 +91,7 @@ rag/graph_rag.py     generate_cypher_query(question, graph)
 rag/hybrid_rag.py    query_hybrid_rag(question, graph, vector_index_name, vector_node_label,
                      vector_source_property, vector_embedding_property, domain_description)
                      -> calls query_vector_rag and generate_cypher_query UNMODIFIED, then
-                     reconciles their two answers with a third gemini-3.5-flash-lite call;
+                     reconciles their two answers with a third gemini-3.1-flash-lite call;
                      degrades to a partial answer if only one source succeeds, raises only if
                      both fail; shares the same Neo4j quota counter (up to 3 requests/call)
                      -> {"answer": str, "vector_chunks": list[str] | None,
@@ -257,7 +257,7 @@ question
   -> Neo4jVector.from_existing_graph (Gemini query-embedding, 768d)
   -> retriever.invoke(question)               # top k=6 chunks by cosine (capped for cost)
   -> stuff chunk text into <context>, truncate to 8000 chars
-  -> ChatPromptTemplate (<user_input> tag marks it untrusted) | gemini-3.5-flash-lite | StrOutputParser
+  -> ChatPromptTemplate (<user_input> tag marks it untrusted) | gemini-3.1-flash-lite | StrOutputParser
   -> answer (wrapped to 60 cols)
 
 daily_limiter.check_and_increment() runs before all of the above — increments
@@ -274,7 +274,7 @@ question
   -> _validate_and_sanitize_question         # reject empty / >300 chars / strip \r\n\t
   -> _entity_name_catalog(graph)              # real Person/Event/Book names, used as allow-list
   -> PromptTemplate(schema, question wrapped in <user_question>, entity_names, few-shot examples)
-  -> GraphCypherQAChain.from_llm(gemini-3.5-flash-lite, allow_dangerous_requests=True)
+  -> GraphCypherQAChain.from_llm(gemini-3.1-flash-lite, allow_dangerous_requests=True)
        -> graph.query wrapped: _enforce_readonly_cypher, _ensure_cypher_limit
        -> LLM writes Cypher -> guarded run on graph -> LLM summarizes rows
   -> answer (wrapped to 60 cols)
@@ -326,7 +326,7 @@ question
   -> generate_cypher_query(...) [try/except] # unmodified call into rag/graph_rag.py
   -> both failed?  -> raise combined error
   -> only one succeeded? -> return it directly, prefixed "(<other> unavailable — ...)"
-  -> both succeeded -> HYBRID_SYNTHESIS_TEMPLATE | gemini-3.5-flash-lite | StrOutputParser
+  -> both succeeded -> HYBRID_SYNTHESIS_TEMPLATE | gemini-3.1-flash-lite | StrOutputParser
        -> synthesis itself fails? -> fall back to showing both raw answers
   -> answer (wrapped to 60 cols)
 ```

@@ -62,7 +62,7 @@ def _synthesize(question: str, vector_answer: str, graph_answer: str, domain_des
     ])
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite",
+        model="gemini-3.1-flash-lite",
         temperature=0,
         google_api_key=os.getenv("GEMINI_API_KEY"),
         max_retries=1,

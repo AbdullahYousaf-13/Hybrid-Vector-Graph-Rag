@@ -149,7 +149,7 @@ def generate_cypher_query(
     )
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite", temperature=temperature, max_retries=1, timeout=30
+        model="gemini-3.1-flash-lite", temperature=temperature, max_retries=1, timeout=30
     )
 
     cypher_chain = GraphCypherQAChain.from_llm(
@@ -176,7 +176,8 @@ def generate_cypher_query(
 
     graph.query = _guarded_query
     try:
-        # The model ignores temperature, so a second attempt often writes valid Cypher.
+        # At temperature=0 a retry usually repeats the same Cypher; it only helps on the rare
+        # run where the model's output still varies.
         try:
             response = cypher_chain.invoke({"query": sanitized_question})
         except CypherSyntaxError:

@@ -326,6 +326,7 @@ question
   -> generate_cypher_query(...) [try/except] # unmodified call into rag/graph_rag.py
   -> both failed?  -> re-raise one original error (quota error first)
        -> API: QuotaExceededError = 429, Gemini overload/rate limit = 503, else 500
+  -> one failed and the other said "I don't know"? -> re-raise the failure (user retries)
   -> only one succeeded? -> return it directly, prefixed "(<other> unavailable — ...)"
   -> one side answered "I don't know"? -> return the other answer, no synthesis call
   -> both succeeded -> HYBRID_SYNTHESIS_TEMPLATE | gemini-3.1-flash-lite | StrOutputParser

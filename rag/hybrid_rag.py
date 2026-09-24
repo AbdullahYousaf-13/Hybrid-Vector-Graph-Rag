@@ -143,6 +143,13 @@ def query_hybrid_rag(
             raise graph_error
         raise vector_error
 
+    # One side failed and the other only says "I don't know": the failed side might have had the
+    # answer, so surface its error (usually a temporary Gemini overload) instead of a dead end.
+    if vector_result is None and _declined(graph_result["answer"]):
+        raise vector_error
+    if graph_result is None and _declined(vector_result["answer"]):
+        raise graph_error
+
     vector_chunks = vector_result["chunks"] if vector_result else None
     graph_cypher_query = graph_result["cypher_query"] if graph_result else None
 

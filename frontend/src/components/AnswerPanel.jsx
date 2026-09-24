@@ -52,8 +52,10 @@ function ErrorState({ error }) {
   const status = error?.status;
   const hint =
     status === 429
-      ? "The shared daily request quota is used up. It resets tomorrow."
-      : status === 400
+      ? "The shared daily request quota is used up. It resets at midnight UTC."
+      : status === 503
+        ? "This is temporary on Google's side. Wait a few seconds and ask again."
+        : status === 400
         ? "Adjust the question and try again."
         : status === 0
           ? "The API isn't reachable - check that the backend process is running."

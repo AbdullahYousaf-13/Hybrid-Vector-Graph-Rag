@@ -6,7 +6,7 @@ import logging
 import os
 import re
 
-from rag.quota import daily_limiter
+from rag.quota import QuotaExceededError, daily_limiter
 from rag.vector_rag import query_vector_rag
 from rag.graph_rag import generate_cypher_query
 
@@ -102,9 +102,10 @@ def query_hybrid_rag(
     (rag/graph_rag.py) unmodified, then reconciling their two answers with a third Gemini call.
 
     Degrades gracefully: if only one source succeeds, returns that answer directly without
-    spending a synthesis call; if both fail, raises one combined error; if the synthesis
+    spending a synthesis call; if the synthesis
     call itself fails, falls back to presenting both raw answers rather than discarding two
     successful retrievals over one failed cheap call.
+    If both fail, re-raises one side's original exception (the quota error, if either hit it).
 
     Returns {"answer": str, "vector_chunks": list[str] | None, "graph_cypher_query": str | None} —
     the metadata fields are None for whichever side didn't run or failed.
@@ -127,11 +128,12 @@ def query_hybrid_rag(
     if graph_error is not None:
         logger.warning("Hybrid: graph side failed", exc_info=graph_error)
 
+    # Both sides are logged above; re-raise one of the originals (a quota hit first) so the API
+    # can map it to the right status instead of treating every double failure the same.
     if vector_result is None and graph_result is None:
-        raise RuntimeError(
-            f"Hybrid RAG Error: both retrieval paths failed. "
-            f"Vector RAG: {vector_error}; Graph RAG: {graph_error}"
-        )
+        if isinstance(graph_error, QuotaExceededError):
+            raise graph_error
+        raise vector_error
 
     vector_chunks = vector_result["chunks"] if vector_result else None
     graph_cypher_query = graph_result["cypher_query"] if graph_result else None

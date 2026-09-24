@@ -25,7 +25,7 @@ from KG.config import load_neo4j_graph
 from rag.vector_rag import get_vector_store, query_vector_rag
 from rag.graph_rag import generate_cypher_query
 from rag.hybrid_rag import query_hybrid_rag
-from rag.quota import daily_limiter
+from rag.quota import QuotaExceededError, daily_limiter
 
 app = FastAPI()
 
@@ -62,6 +62,16 @@ def _read_quota() -> dict:
         return {"used": None, "max": daily_limiter.max_rpd}
 
 
+def _gemini_busy(error: BaseException) -> bool:
+    """True for Gemini's temporary 503 overload / 429 rate-limit errors, however LangChain wrapped them."""
+    while error is not None:
+        text = str(error)
+        if "UNAVAILABLE" in text or "RESOURCE_EXHAUSTED" in text:
+            return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
 @app.get("/api/health")
 def health():
     """Cheap liveness check: no LLM call, no quota cost. Used as Render's health check."""
@@ -91,10 +101,15 @@ def query(request: QueryRequest):
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
+    except QuotaExceededError as e:
         raise HTTPException(status_code=429, detail=str(e))
-    except Exception:
+    except Exception as e:
         logging.getLogger("uvicorn.error").exception("Query failed (mode=%s)", request.mode)
+        if _gemini_busy(e):
+            raise HTTPException(
+                status_code=503,
+                detail="Gemini is overloaded or rate-limiting requests right now.",
+            )
         raise HTTPException(status_code=500, detail="Internal error while answering the question.")
 
 

@@ -28,6 +28,10 @@ RETURN q.count AS count
 _READ = f"MATCH (q:{QUOTA_LABEL} {{date: $date}}) RETURN q.count AS count"
 
 
+class QuotaExceededError(RuntimeError):
+    """The app's own daily cap was hit (not a Gemini-side limit)."""
+
+
 def _today() -> str:
     # UTC so a local run and the Render deploy agree on when the day rolls over.
     return datetime.datetime.now(datetime.timezone.utc).date().isoformat()
@@ -63,7 +67,7 @@ class Neo4jDailyQuota:
         self._db()
         records = self._query(_INCREMENT, date=_today(), max=self.max_rpd)
         if not records:
-            raise RuntimeError(
+            raise QuotaExceededError(
                 f"Daily Quota Guardrail Triggered: Max daily limit of {self.max_rpd} "
                 f"requests reached ({self.max_rpd}/{self.max_rpd}). Resets at midnight UTC."
             )

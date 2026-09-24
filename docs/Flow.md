@@ -88,7 +88,7 @@ flowchart LR
 | #   | Step                 | Where                                                       | Tool used                                                                                     | Details                                                                                                                                                         |
 | --- | -------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0   | Validate & sanitize  | `_validate_and_sanitize_question` (`rag/vector_rag.py`)     | plain Python                                                                                  | **guardrail**: rejects empty input and anything over 300 chars, strips `\r\n\t`                                                                                 |
-| 1   | Check daily quota    | `daily_limiter.check_and_increment()` (`rag/quota.py`) | `Neo4jDailyQuota`, a `DailyQuota` node in Neo4j                     | **guardrail**: raises `RuntimeError` once today's request count reaches `max_rpd` (250); shared by all modes and survives restarts and redeploys           |
+| 1   | Check daily quota    | `daily_limiter.check_and_increment()` (`rag/quota.py`) | `Neo4jDailyQuota`, a `DailyQuota` node in Neo4j                     | **guardrail**: raises `QuotaExceededError` (HTTP 429) once today's request count reaches `max_rpd` (250); shared by all modes and survives restarts and redeploys           |
 | 2   | Connect to the index | `Neo4jVector.from_existing_graph` (`rag/vector_rag.py`)     | `langchain-neo4j`                                                                             | points at index `Chunk`, text prop `text`, vector prop `textEmbedding`                                                                                          |
 | 3   | Embed the question   | same call's `embedding=`                                    | **Gemini** `gemini-embedding-001` via `langchain-google-genai` `GoogleGenerativeAIEmbeddings` | task `RETRIEVAL_QUERY`, **768 dims** (must match the stored vectors)                                                                                            |
 | 4   | Find nearest chunks  | `.as_retriever(search_kwargs={"k": 6}).invoke(...)`         | Neo4j `db.index.vector.queryNodes`                                                            | top **6** by cosine similarity — raised from 3 once the corpus grew to 7 books, since 3 chunks × 2000 chars was already exceeding the old 3500-char context cap |
@@ -201,7 +201,7 @@ flowchart LR
     GR --> S
     S -->|both| M[Gemini reconciles<br/>the two answers]
     S -->|one only| P[return that<br/>answer directly]
-    S -->|neither| X[raise combined error]
+    S -->|neither| X[re-raise original error]
 ```
 
 
@@ -258,7 +258,7 @@ def query_hybrid_rag(question, graph, ...):
         graph_result, graph_error = None, e
 
     if vector_result is None and graph_result is None:            # 2
-        raise RuntimeError(f"Hybrid RAG Error: both retrieval paths failed. ...")
+        raise graph_error if isinstance(graph_error, QuotaExceededError) else vector_error
     if graph_result is None:
         return {"answer": f"(Graph RAG unavailable — answer from Vector RAG only)\n\n{vector_result['answer']}",
                 "vector_chunks": vector_result["chunks"], "graph_cypher_query": None}

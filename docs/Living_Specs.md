@@ -324,7 +324,8 @@ question
   -> _validate_and_sanitize_question
   -> query_vector_rag(...) [try/except]     # unmodified call into rag/vector_rag.py
   -> generate_cypher_query(...) [try/except] # unmodified call into rag/graph_rag.py
-  -> both failed?  -> raise combined error
+  -> both failed?  -> re-raise one original error (quota error first)
+       -> API: QuotaExceededError = 429, Gemini overload/rate limit = 503, else 500
   -> only one succeeded? -> return it directly, prefixed "(<other> unavailable — ...)"
   -> both succeeded -> HYBRID_SYNTHESIS_TEMPLATE | gemini-3.1-flash-lite | StrOutputParser
        -> synthesis itself fails? -> fall back to showing both raw answers

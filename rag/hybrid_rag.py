@@ -2,6 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
 from concurrent.futures import ThreadPoolExecutor
+import logging
 import textwrap
 import os
 import re
@@ -9,6 +10,8 @@ import re
 from rag.quota import daily_limiter
 from rag.vector_rag import query_vector_rag
 from rag.graph_rag import generate_cypher_query
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_and_sanitize_question(question: str) -> str:
@@ -115,6 +118,12 @@ def query_hybrid_rag(
         graph_future = pool.submit(_run, generate_cypher_query, sanitized_question, graph)
         vector_result, vector_error = vector_future.result()
         graph_result, graph_error = graph_future.result()
+
+    # A failed side is otherwise swallowed by the fallback below, leaving no trace in the logs.
+    if vector_error is not None:
+        logger.warning("Hybrid: vector side failed", exc_info=vector_error)
+    if graph_error is not None:
+        logger.warning("Hybrid: graph side failed", exc_info=graph_error)
 
     if vector_result is None and graph_result is None:
         raise RuntimeError(

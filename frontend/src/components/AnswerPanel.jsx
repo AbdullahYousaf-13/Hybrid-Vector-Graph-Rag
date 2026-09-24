@@ -77,7 +77,12 @@ function ErrorState({ error }) {
 
 function AnswerSheet({ result, asked }) {
   const mode = MODES.find((m) => m.id === asked?.mode);
-  const blocks = parseAnswer(result.answer);
+  const allBlocks = parseAnswer(result.answer);
+  // Hybrid prefixes degraded answers with a "(... unavailable ...)" status line; show it as a
+  // quiet note so the drop cap lands on the real answer instead of "(G".
+  const hasNotice = allBlocks[0]?.type === "paragraph" && /^\(.*\)$/.test(allBlocks[0].text);
+  const notice = hasNotice ? allBlocks[0].text.slice(1, -1) : null;
+  const blocks = hasNotice ? allBlocks.slice(1) : allBlocks;
   const quota = result.quota;
   const quotaPercent = quota?.max ? Math.min(100, (quota.used / quota.max) * 100) : 0;
 
@@ -99,6 +104,7 @@ function AnswerSheet({ result, asked }) {
       </div>
 
       <div className="mt-5 space-y-3.5 text-[19px] leading-[1.6] text-parchment-50">
+        {notice && <p className="text-base text-mist italic">{notice}</p>}
         {blocks.map((block, index) =>
           block.type === "list" ? (
             <ul key={index} className="space-y-2 pl-1">

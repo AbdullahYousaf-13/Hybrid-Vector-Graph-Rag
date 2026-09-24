@@ -81,6 +81,14 @@ def _synthesize(question: str, vector_answer: str, graph_answer: str, domain_des
     return result.strip()
 
 
+_DECLINE = re.compile(r"^\W*i\s+(do\s+not|don't|don’t)\s+know", re.IGNORECASE)
+
+
+def _declined(answer: str) -> bool:
+    """Both QA prompts open with "I don't know" when the retrieved data doesn't answer the question."""
+    return bool(_DECLINE.match(answer))
+
+
 def _run(fn, *args):
     try:
         return fn(*args), None
@@ -102,7 +110,7 @@ def query_hybrid_rag(
     (rag/graph_rag.py) unmodified, then reconciling their two answers with a third Gemini call.
 
     Degrades gracefully: if only one source succeeds, returns that answer directly without
-    spending a synthesis call; if the synthesis
+    spending a synthesis call, and does the same when one side answered "I don't know"; if the synthesis
     call itself fails, falls back to presenting both raw answers rather than discarding two
     successful retrievals over one failed cheap call.
     If both fail, re-raises one side's original exception (the quota error, if either hit it).
@@ -151,12 +159,24 @@ def query_hybrid_rag(
             "graph_cypher_query": graph_cypher_query,
         }
 
+    # Nothing to reconcile when one side declined: use the other answer and skip a Gemini call.
+    vector_declined, graph_declined = _declined(vector_result["answer"]), _declined(graph_result["answer"])
+    if vector_declined or graph_declined:
+        answer = graph_result["answer"] if vector_declined and not graph_declined else vector_result["answer"]
+        return {
+            "answer": answer,
+            "vector_chunks": vector_chunks,
+            "graph_cypher_query": graph_cypher_query,
+        }
+
     try:
         answer = _synthesize(sanitized_question, vector_result["answer"], graph_result["answer"], domain_description)
-    except Exception:
+    except Exception as e:
+        logger.warning("Hybrid: synthesis failed", exc_info=e)
         answer = (
-            "(Automatic synthesis unavailable — showing both raw answers)\n\n"
-            f"Vector RAG: {vector_result['answer']}\n\nGraph RAG: {graph_result['answer']}"
+            "(Couldn't merge the two answers right now, so both are shown)\n\n"
+            f"## From the book text\n\n{vector_result['answer']}\n\n"
+            f"## From the knowledge graph\n\n{graph_result['answer']}"
         )
 
     return {

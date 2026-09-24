@@ -39,7 +39,7 @@ CYPHER_GENERATION_TEMPLATE = """Task: Generate a Cypher query to query a graph d
 Instructions:
 - Use only the node labels, relationship types and properties in the schema below.
 - Do not use any label, relationship type or property that is not in the schema.
-- Person.name, Event.name, and Book.name are short ids from source files, NOT full titles. Match `.name` using ONLY a value from this list:
+- Book.name values are short ids from source files, NOT full titles. Match Book `.name` using ONLY a value from this list:
 {entity_names}
 - Entity names are typically stored in their full/formal form, not a shortened version used in casual speech
   (e.g. a stored name like "John Smith" might be referred to in a question as just "John"). When matching an
@@ -49,15 +49,13 @@ Instructions:
 - Do not filter based on complex properties if unsure; filter primarily on relationships and return text/properties that exist.
 - Book/document names use underscores instead of spaces (e.g. a title like "Chapter One: Beginnings" may be
   stored as "Chapter_One_Beginnings") — always match against the actual stored form shown in the schema/allow-list above, never the human-readable title.
-- PARENT_OF and CHILD_OF both exist in this graph as separate relationship types pointing opposite ways, and
-  the same real-world parent/child fact may be stored under either one depending on the individual pair — never
-  assume only one direction is used. For ANY question about parents, children, sons, or daughters, always check
-  BOTH directions, e.g.:
-  MATCH (parent:Entity)-[:PARENT_OF]->(child:Entity) WHERE toLower(parent.name) CONTAINS toLower("<name from question>")
-  RETURN child.name AS child
+- If the schema has a relationship type and its opposite (e.g. PARENT_OF and CHILD_OF), the same fact may be
+  stored under either one, so check BOTH, e.g.:
+  MATCH (a:Entity)-[:PARENT_OF]->(b:Entity) WHERE toLower(a.name) CONTAINS toLower("<name from question>")
+  RETURN b.name AS name
   UNION
-  MATCH (child:Entity)-[:CHILD_OF]->(parent:Entity) WHERE toLower(parent.name) CONTAINS toLower("<name from question>")
-  RETURN child.name AS child
+  MATCH (b:Entity)-[:CHILD_OF]->(a:Entity) WHERE toLower(a.name) CONTAINS toLower("<name from question>")
+  RETURN b.name AS name
 - If you use UNION, every part must RETURN exactly the same column names in the same order. Always alias
   columns with AS (e.g. RETURN killer.name AS name, type(r) AS relation).
 - For questions about who or what is connected to an entity, match the relationship with NO direction
@@ -116,14 +114,14 @@ def _entity_name_catalog(graph) -> str:
     rows = graph.query(
         """
         MATCH (n)
-        WHERE n:Person OR n:Event OR n:Book
-        RETURN labels(n)[0] AS label, n.name AS name
-        ORDER BY label, name
+        WHERE n:Book
+        RETURN n.name AS name
+        ORDER BY name
         """
     )
     if not rows:
         return '(none found — do not guess names)'
-    return "\n".join(f'- {row["label"]}: "{row["name"]}"' for row in rows)
+    return "\n".join(f'- Book: "{row["name"]}"' for row in rows)
 
 
 def generate_cypher_query(

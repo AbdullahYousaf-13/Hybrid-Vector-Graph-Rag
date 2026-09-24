@@ -98,8 +98,9 @@ rag/hybrid_rag.py    query_hybrid_rag(question, graph, vector_index_name, vector
                          "graph_cypher_query": str | None}
 prep.ipynb       one-time ingestion pipeline (§6)
 main.ipynb       query entry point (§7)
-KG/csv_to_json.py  one-off converter: data/harry_potter_books.csv -> data/Book_*.json
-                   (groups CSV rows by book, then chapter; run once, not part of prep.ipynb)
+KG/csv_to_json.py  one-off converter: any CSV -> one data/<book>.json per book
+                   (python -m KG.csv_to_json <csv> [--book-col --section-col --text-col];
+                   groups rows by book, then section, in file order; not part of prep.ipynb)
 KG/backup.py     export_graph / wipe_graph / import_graph — full graph JSON
                  backup so a corpus can be wiped and restored without
                  re-calling the embedding API
@@ -135,11 +136,11 @@ ingestion/graph-building pipeline and was not moved.
 | `Chunk`   | 3,565                     | `chunkId` (unique), `text`, `source` (= JSON chapter), `chunkSeqId`, `node_name`, `textEmbedding` (768-float) |
 | `Section` | 200 (chapters, all books) | `type` (= JSON chapter key, e.g. `chap-1`), `parent_name`                                                     |
 | `Book`    | 7                         | `name` — e.g. `Book_1_Philosopher_s_Stone` … `Book_7_Deathly_Hallows`                                         |
-| `Entity`  | ~1,800 (after dedup)      | `name`, `type` (`Character`/`Location`/`Spell`/`Object`/`Creature`/`Organization`) |
+| `Entity`  | ~1,800 (after dedup)      | `name`, `type` (current graph: `Character`/`Location`/`Spell`/`Object`/`Creature`/`Organization`; new ingestions use the generic `Person`/`Location`/`Organization`/`Object`/`Event`/`Concept`) |
 
 `Book.name` values are **filename-derived ids** (underscores, no spaces), not the
 human-readable book titles. `rag/graph_rag.py` injects the real list
-(`_entity_name_catalog`, matching `Person`/`Event`/`Book`) into the Cypher
+(`_entity_name_catalog`, matching `Book`) into the Cypher
 prompt as an allow-list so the LLM stops inventing slugs — this catalog does
 **not** include `Entity` names (too many to usefully allow-list; the LLM relies
 on `{schema}` plus a few-shot example instead, see §7).
@@ -174,7 +175,7 @@ including what is **not** implemented yet, lives in **[Guardrails.md](Guardrails
 ## 6. Ingestion pipeline (`prep.ipynb`)
 
 0. `KG/csv_to_json.py` (run once, separately, before `prep.ipynb`) — converts
-   `data/harry_potter_books.csv` into one `data/Book_*.json` per book, shaped
+   a source CSV (path passed as an argument) into one `data/<book>.json` per book, shaped
    as `{chapter_key: full_chapter_text}` to match what `split_data_from_file`
    expects (same `{section_name: text}` shape the old Wikipedia JSONs used).
 1. `load_neo4j_graph()` — connect to Aura (now guarded, see §5).
@@ -272,7 +273,7 @@ Answers strictly from retrieved chunk text ("say you don't know" otherwise).
 ```
 question
   -> _validate_and_sanitize_question         # reject empty / >300 chars / strip \r\n\t
-  -> _entity_name_catalog(graph)              # real Person/Event/Book names, used as allow-list
+  -> _entity_name_catalog(graph)              # real Book names, used as allow-list
   -> PromptTemplate(schema, question wrapped in <user_question>, entity_names, few-shot examples)
   -> GraphCypherQAChain.from_llm(gemini-3.1-flash-lite, allow_dangerous_requests=True)
        -> graph.query wrapped: _enforce_readonly_cypher, _ensure_cypher_limit
@@ -292,11 +293,10 @@ instead of literal `"Ron Weasley"`/`"Book_1_Philosopher_s_Stone"` — the
 checking both relationship directions) are genuinely generic to this
 project's schema, but the old literal example values were specific to this
 one corpus and would have looked out of place run against different data.
-The prompt also explicitly tells the LLM to check **both** `PARENT_OF` and
-`CHILD_OF` directions for any parent/child/son/daughter question (via `UNION`)
-— extraction and normalization left the same real-world fact sometimes stored
-under either type depending on the pair, so querying only one direction
-silently misses results.
+The prompt also tells the LLM that when the schema has a relationship type and its
+opposite (e.g. `PARENT_OF`/`CHILD_OF`), it must check **both** (via `UNION`), and to
+match "who is connected to X" questions with no direction while skipping `MENTIONED_IN`,
+since extraction sometimes stores a fact backwards. `top_k=15` rows reach the QA step.
 
 `daily_limiter.check_and_increment()` runs before all of the above, sharing
 the same Neo4j quota counter (`rag/quota.py`) as `rag/vector_rag.py`. `graph.query` is

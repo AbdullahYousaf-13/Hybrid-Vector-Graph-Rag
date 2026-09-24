@@ -16,7 +16,7 @@ evidence — if the evidence doesn't make it clear they're the same, leave them 
 If an entity has no clear alias in this list, map it to itself.
 
 Return ONLY a JSON object mapping every input name to its canonical name, like:
-{{"Harry": "Harry Potter", "Harry Potter": "Harry Potter", "Hogwarts": "Hogwarts", ...}}
+{{"John": "John Smith", "John Smith": "John Smith", "Acme": "Acme Corporation", ...}}
 
 Every name from the input list must appear exactly once as a key.
 

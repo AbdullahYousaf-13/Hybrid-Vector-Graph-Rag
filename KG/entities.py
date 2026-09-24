@@ -8,14 +8,14 @@ from google.genai import types
 ENTITY_EXTRACTION_PROMPT = """You are extracting a knowledge graph from {domain_description}.
 
 For each chunk below, identify:
-- entities: named characters, places, spells, magical objects, creatures, or organizations mentioned (skip generic/common nouns)
-- relationships: meaningful connections between two entities found in THIS chunk (e.g. FRIEND_OF, TEACHES, ATTENDS, LOCATED_IN, CASTS, MEMBER_OF, ENEMY_OF)
+- entities: named people, places, organizations, objects, events, or concepts mentioned (skip generic/common nouns)
+- relationships: meaningful connections between two entities found in THIS chunk (e.g. WORKS_FOR, PART_OF, LOCATED_IN, MEMBER_OF, CREATED, OWNS, RELATED_TO)
 
 Return ONLY a JSON array, one object per chunk, in the same order as given, with this exact shape:
 [
   {{
     "chunkId": "<chunk id>",
-    "entities": [{{"name": "...", "type": "Character|Location|Spell|Object|Creature|Organization"}}],
+    "entities": [{{"name": "...", "type": "Person|Location|Organization|Object|Event|Concept"}}],
     "relationships": [{{"source": "...", "relation": "UPPER_SNAKE_CASE", "target": "..."}}]
   }}
 ]

@@ -8,7 +8,6 @@ from rag.quota import QUOTA_LABEL, daily_limiter
 
 
 def _validate_and_sanitize_question(question: str) -> str:
-    """Guardrail: Validate length and sanitize the query string."""
     if not question or not question.strip():
         raise ValueError("Guardrail Error: Query cannot be empty.")
     if len(question) > 300:
@@ -17,7 +16,6 @@ def _validate_and_sanitize_question(question: str) -> str:
 
 
 def _enforce_readonly_cypher(cypher: str) -> str:
-    """Guardrail: Strict read-only enforcement blocking database mutation commands."""
     forbidden_keywords = ["CREATE", "DELETE", "SET", "DROP", "MERGE", "REMOVE", "DETACH", "ALTER"]
     upper_cypher = cypher.upper()
     for kw in forbidden_keywords:
@@ -27,7 +25,6 @@ def _enforce_readonly_cypher(cypher: str) -> str:
 
 
 def _ensure_cypher_limit(cypher: str, default_limit: int = 25) -> str:
-    """Guardrail: Automatically injects a row limit if the query is unbounded."""
     cleaned = cypher.strip().rstrip(';')
     if "LIMIT" not in cleaned.upper():
         cleaned += f" LIMIT {default_limit}"
@@ -130,16 +127,8 @@ def generate_cypher_query(
     temperature: float = 0,
     verbose: bool = True,
 ) -> dict:
-    """
-    Answers a natural-language question using Graph RAG with read-only enforcement,
-    row limits, and persistent shared daily quota tracking.
-
-    Returns {"answer": str, "cypher_query": str} — cypher_query is the
-    Cypher the LLM generated and actually ran against Neo4j.
-    """
     sanitized_question = _validate_and_sanitize_question(question)
 
-    # 1. Track against shared daily quota pool
     daily_limiter.check_and_increment()
 
     cypher_prompt = PromptTemplate(
@@ -169,20 +158,15 @@ def generate_cypher_query(
         exclude_types=[QUOTA_LABEL],
     )
 
-    # Guardrail: intercept the exact Cypher the chain is about to run against
-    # Neo4j. graph.query is the only place GraphCypherQAChain actually
-    # executes the LLM-written query, so wrap it just for this call.
     original_query = graph.query
 
     def _guarded_query(cypher, *args, **kwargs):
-        cypher = _enforce_readonly_cypher(cypher)  # raises on CREATE/DELETE/SET/...
-        cypher = _ensure_cypher_limit(cypher)       # adds LIMIT if missing
+        cypher = _enforce_readonly_cypher(cypher)
+        cypher = _ensure_cypher_limit(cypher)
         return original_query(cypher, *args, **kwargs)
 
     graph.query = _guarded_query
     try:
-        # At temperature=0 a retry usually repeats the same Cypher; it only helps on the rare
-        # run where the model's output still varies.
         try:
             response = cypher_chain.invoke({"query": sanitized_question})
         except CypherSyntaxError:
@@ -190,7 +174,7 @@ def generate_cypher_query(
     except CypherSyntaxError:
         raise ValueError("Couldn't build a valid graph query for this question. Try rephrasing it.")
     finally:
-        graph.query = original_query  # always restore, even if this raised
+        graph.query = original_query
 
     raw_result = response["result"]
     intermediate_steps = response.get("intermediate_steps") or []

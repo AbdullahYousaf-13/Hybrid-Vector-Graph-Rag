@@ -26,12 +26,6 @@ Input entities (name | type | relationship count | evidence):
 
 
 def get_entity_evidence(graph, limit=400, evidence_chunks_per_entity=2, evidence_chars=300):
-    """
-    Top-N most-connected entities, each paired with a short excerpt of real text
-    from up to `evidence_chunks_per_entity` chunks it's actually mentioned in
-    (via existing MENTIONED_IN links) — grounding for alias-merging decisions
-    instead of relying on the LLM's own background knowledge of the name.
-    """
     entities = graph.query("""
         MATCH (e:Entity)
         OPTIONAL MATCH (e)-[r]-()
@@ -72,8 +66,6 @@ def build_entity_mapping(api_key, entities_with_evidence, model="gemini-3.5-flas
 
 
 def merge_entity(graph, old_name, canonical_name):
-    """Redirects every relationship (any type, any direction) from old_name onto
-    canonical_name, then deletes the now-orphaned old node. No APOC required."""
     graph.query("MERGE (c:Entity {name: $name})", params={"name": canonical_name})
 
     out_rels = graph.query(

@@ -1,6 +1,5 @@
 import { cx } from "../utils/cx.js";
 
-// The real house colours, deep and matte: an aged banner, not neon piping.
 const HOUSES = [
   "via-gryffindor-ribbon",
   "via-slytherin-ribbon",
@@ -8,9 +7,6 @@ const HOUSES = [
   "via-hufflepuff-ribbon",
 ];
 
-/**
- * The four house colours as fading ribbons, held together by a gold hairline.
- */
 export default function HouseRibbon({ className }) {
   return (
     <div aria-hidden="true" className={cx("w-full", className)}>

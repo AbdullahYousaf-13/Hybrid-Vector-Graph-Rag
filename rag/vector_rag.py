@@ -12,7 +12,6 @@ load_dotenv()
 
 
 def _validate_and_sanitize_question(question: str) -> str:
-    """Guardrail: Validate length and sanitize vector RAG query string."""
     if not question or not question.strip():
         raise ValueError("Guardrail Error: Query cannot be empty.")
     if len(question) > 300:
@@ -52,26 +51,16 @@ def query_vector_rag(
     vector_source_property: str,
     vector_embedding_property: str,
 ) -> dict:
-    """
-    Retrieves chunks from Neo4j vector index with chunk limiting (`k=6`),
-    context truncation, and shared persistent daily quota tracking.
-
-    Returns {"answer": str, "chunks": list[str]} — chunks are the raw
-    retrieved chunk texts, in retrieval order.
-    """
     sanitized_question = _validate_and_sanitize_question(question)
 
-    # 1. Track against shared persistent daily quota pool
     daily_limiter.check_and_increment()
 
     vector_store = get_vector_store(
         vector_index_name, vector_node_label, vector_source_property, vector_embedding_property
     )
 
-    # 2. Cost Guardrail: Context Window & Chunk Limiting (capped at k=6)
     docs = vector_store.as_retriever(search_kwargs={"k": 6}).invoke(sanitized_question)
 
-    # 3. Cost Guardrail: Context String Truncation (Max 8000 chars)
     context = "\n\n".join(d.page_content for d in docs)
     if len(context) > 8000:
         context = context[:8000] + "\n[Context truncated to save token costs]"

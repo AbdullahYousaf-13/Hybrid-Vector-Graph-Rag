@@ -1,17 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { askQuestion } from "../api.js";
 
-/**
- * Owns one question/answer round trip: the request, the result, and a live
- * elapsed-time counter that ticks while the request is in flight. The result
- * carries `total_seconds` (what the user actually waited, including network and
- * server cold start) next to the backend's `time_seconds` (retrieval only).
- */
 export function useAsk() {
-  const [status, setStatus] = useState("idle"); // idle | loading | success | error
+  const [status, setStatus] = useState("idle");
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
-  const [asked, setAsked] = useState(null); // { question, mode } as sent
+  const [asked, setAsked] = useState(null);
   const [elapsed, setElapsed] = useState(0);
 
   const timerRef = useRef(null);

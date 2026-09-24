@@ -1,13 +1,6 @@
 import { CornerFlourish } from "./Ornament.jsx";
 import { cx } from "../utils/cx.js";
 
-/**
- * The smoked-glass surface the question form and the answer sit on. The
- * blur, grain, gold double rule and shadow live in `.panel` (index.css);
- * this adds the four gold corner flourishes and consistent padding.
- * Flourishes are desktop-only: on phones the padding is too tight for them
- * to stay clear of the content.
- */
 export default function Panel({ className, children, ...rest }) {
   const corner = "pointer-events-none absolute hidden size-7 text-gold-400/55 sm:block";
 

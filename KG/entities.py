@@ -28,7 +28,6 @@ Chunks:
 
 
 def _sanitize_rel_type(relation: str) -> str:
-    """Keep only A-Z, 0-9, underscore; guarantees safe interpolation into Cypher."""
     cleaned = re.sub(r'[^A-Za-z0-9_]', '_', relation.upper()).strip('_')
     return cleaned or "RELATED_TO"
 
@@ -56,14 +55,6 @@ def _call_gemini_json(client, model, prompt, max_attempts=6):
 
 def extract_entities(graph, api_key, batch_size=15, book_filter=None, model="gemini-3.5-flash-lite",
                       domain_description="this text corpus"):
-    """
-    Reads Chunk text from Neo4j, asks Gemini to extract entities + relationships
-    per chunk, and MERGEs the results into the graph as :Entity nodes linked to
-    their source Chunk via :MENTIONED_IN, with typed relationships between entities.
-    `domain_description` is a short phrase describing the corpus (e.g. "Harry Potter
-    book text", "internal legal contracts") — keeps the prompt dataset-agnostic
-    instead of hardcoding one corpus's name.
-    """
     client = genai.Client(api_key=api_key)
 
     filter_clause = "WHERE c.node_name = $book" if book_filter else ""
@@ -118,7 +109,7 @@ def extract_entities(graph, api_key, batch_size=15, book_filter=None, model="gem
                     params={"source": source, "target": target},
                 )
 
-        time.sleep(4)  # stay comfortably under free-tier RPM (15/min for this model)
+        time.sleep(4)
 
     print("Finished entity extraction.")
 
@@ -150,15 +141,6 @@ def extract_relationships_for_category(graph, api_key, category, flag_property,
                                         batch_size=25, book_filter=None,
                                         model="gemini-3.5-flash-lite",
                                         domain_description="this text corpus"):
-    """
-    Targeted, purely additive relationship extraction for one specific category (e.g. "family
-    relationships such as parent, child, sibling, spouse"). Scans Chunk text directly and, unlike
-    extract_entities' relationships, records a `sourceChunk` property on every created edge so it
-    can be verified/audited later against real evidence instead of an arbitrary shared chunk.
-    Only ever MERGEs — never deletes or overwrites anything existing. `flag_property` marks
-    processed chunks (e.g. "familyExtracted") so re-running only covers what's left.
-    `domain_description` describes the corpus, same purpose as in extract_entities.
-    """
     client = genai.Client(api_key=api_key)
 
     filter_clause = f"WHERE c.{flag_property} IS NULL"

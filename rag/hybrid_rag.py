@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_and_sanitize_question(question: str) -> str:
-    """Guardrail: Validate length and sanitize the query string."""
     if not question or not question.strip():
         raise ValueError("Guardrail Error: Query cannot be empty.")
     if len(question) > 300:
@@ -85,7 +84,6 @@ _DECLINE = re.compile(r"^\W*i\s+(do\s+not|don't|don’t)\s+know", re.IGNORECASE)
 
 
 def _declined(answer: str) -> bool:
-    """Both QA prompts open with "I don't know" when the retrieved data doesn't answer the question."""
     return bool(_DECLINE.match(answer))
 
 
@@ -105,22 +103,8 @@ def query_hybrid_rag(
     vector_embedding_property: str = "textEmbedding",
     domain_description: str = "this text corpus",
 ) -> dict:
-    """
-    Answers a question by calling query_vector_rag (rag/vector_rag.py) and generate_cypher_query
-    (rag/graph_rag.py) unmodified, then reconciling their two answers with a third Gemini call.
-
-    Degrades gracefully: if only one source succeeds, returns that answer directly without
-    spending a synthesis call, and does the same when one side answered "I don't know"; if the synthesis
-    call itself fails, falls back to presenting both raw answers rather than discarding two
-    successful retrievals over one failed cheap call.
-    If both fail, re-raises one side's original exception (the quota error, if either hit it).
-
-    Returns {"answer": str, "vector_chunks": list[str] | None, "graph_cypher_query": str | None} —
-    the metadata fields are None for whichever side didn't run or failed.
-    """
     sanitized_question = _validate_and_sanitize_question(question)
 
-    # Run both retrievals at once: total wait is the slower one, not both added up.
     with ThreadPoolExecutor(max_workers=2) as pool:
         vector_future = pool.submit(
             _run, query_vector_rag, sanitized_question,
@@ -130,21 +114,16 @@ def query_hybrid_rag(
         vector_result, vector_error = vector_future.result()
         graph_result, graph_error = graph_future.result()
 
-    # A failed side is otherwise swallowed by the fallback below, leaving no trace in the logs.
     if vector_error is not None:
         logger.warning("Hybrid: vector side failed", exc_info=vector_error)
     if graph_error is not None:
         logger.warning("Hybrid: graph side failed", exc_info=graph_error)
 
-    # Both sides are logged above; re-raise one of the originals (a quota hit first) so the API
-    # can map it to the right status instead of treating every double failure the same.
     if vector_result is None and graph_result is None:
         if isinstance(graph_error, QuotaExceededError):
             raise graph_error
         raise vector_error
 
-    # One side failed and the other only says "I don't know": the failed side might have had the
-    # answer, so surface its error (usually a temporary Gemini overload) instead of a dead end.
     if vector_result is None and _declined(graph_result["answer"]):
         raise vector_error
     if graph_result is None and _declined(vector_result["answer"]):
@@ -166,7 +145,6 @@ def query_hybrid_rag(
             "graph_cypher_query": graph_cypher_query,
         }
 
-    # Nothing to reconcile when one side declined: use the other answer and skip a Gemini call.
     vector_declined, graph_declined = _declined(vector_result["answer"]), _declined(graph_result["answer"])
     if vector_declined or graph_declined:
         answer = graph_result["answer"] if vector_declined and not graph_declined else vector_result["answer"]

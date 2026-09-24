@@ -80,8 +80,6 @@ function ErrorState({ error }) {
 function AnswerSheet({ result, asked }) {
   const mode = MODES.find((m) => m.id === asked?.mode);
   const allBlocks = parseAnswer(result.answer);
-  // Hybrid prefixes degraded answers with a "(... unavailable ...)" status line; show it as a
-  // quiet note so the drop cap lands on the real answer instead of "(G".
   const hasNotice = allBlocks[0]?.type === "paragraph" && /^\(.*\)$/.test(allBlocks[0].text);
   const notice = hasNotice ? allBlocks[0].text.slice(1, -1) : null;
   const blocks = hasNotice ? allBlocks.slice(1) : allBlocks;

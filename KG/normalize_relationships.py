@@ -57,7 +57,6 @@ def build_canonical_mapping(api_key, rel_counts, model="gemini-3.5-flash-lite", 
 
 
 def apply_mapping(graph, mapping):
-    """Rewrites every non-structural relationship to its canonical type."""
     changed = 0
     for old_type, canonical in mapping.items():
         if old_type == canonical:
@@ -98,7 +97,6 @@ Items:
 
 
 def _find_grounding_chunk(graph, a_name, b_name):
-    """A real chunk of source text both entities are mentioned in, if one exists."""
     rows = graph.query(
         """
         MATCH (a:Entity {name: $a})-[:MENTIONED_IN]->(c:Chunk)<-[:MENTIONED_IN]-(b:Entity {name: $b})
@@ -111,14 +109,6 @@ def _find_grounding_chunk(graph, a_name, b_name):
 
 
 def verify_relationships(graph, api_key, rel_types, batch_size=20, model="gemini-3.5-flash-lite"):
-    """
-    Grounded verification/correction pass for the given relationship type(s). For each edge,
-    finds a real chunk both connected entities are mentioned in (via the MENTIONED_IN links
-    already created during extraction) and asks the LLM to confirm, redirect, or drop the edge
-    based on that actual source text — not on background knowledge. Works on any corpus, since
-    it only relies on that corpus's own already-extracted text, never on the model "knowing" the
-    subject matter.
-    """
     client = genai.Client(api_key=api_key)
     type_pattern = "|".join(f"`{t}`" for t in rel_types)
 
@@ -203,15 +193,6 @@ Items:
 
 
 def verify_relationships_with_source(graph, api_key, rel_types, batch_size=20, model="gemini-3.5-flash-lite"):
-    """
-    Like verify_relationships, but uses each edge's own recorded r.sourceChunk (set by
-    extract_relationships_for_category) as grounding evidence instead of an arbitrary shared
-    chunk. Edges with no sourceChunk (created before source tracking existed) are left
-    completely untouched, since there's nothing real to verify them against. Also resolves or
-    drops edges where an entity name is a generic placeholder (e.g. "mother") rather than a
-    proper name, based on whether the source text reveals who it actually is. Deletes/rewrites
-    only the exact edge matched by its own sourceChunk, never other edges between the same pair.
-    """
     client = genai.Client(api_key=api_key)
     type_pattern = "|".join(f"`{t}`" for t in rel_types)
 

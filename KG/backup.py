@@ -1,15 +1,3 @@
-"""
-Export/import the whole graph (nodes, relationships, and embedding vectors)
-to a local JSON file, so a dataset (e.g. the Napoleon corpus) can be fully
-wiped and later restored WITHOUT re-calling the embedding API.
-
-Node keys used to re-MERGE on import (must match KG/kg.py's ingestion keys):
-    Chunk   -> chunkId
-    Section -> (type, parent_name)
-    Person  -> name
-    Event   -> name
-"""
-
 import json
 from pathlib import Path
 
@@ -17,21 +5,14 @@ NODE_LABELS = ["Chunk", "Section", "Person", "Event"]
 
 
 def _node_key(label: str, props: dict) -> dict:
-    """The property (or properties) that uniquely identify a node of this label."""
     if label == "Chunk":
         return {"chunkId": props["chunkId"]}
     if label == "Section":
         return {"type": props["type"], "parent_name": props["parent_name"]}
-    # Person, Event
     return {"name": props["name"]}
 
 
 def export_graph(graph, out_path: str) -> dict:
-    """
-    Reads every node (by label) and every relationship in the graph and
-    writes them to `out_path` as JSON. Read-only - does not modify the DB.
-    Returns a small summary dict of what was exported.
-    """
     data = {"nodes": {}, "relationships": []}
 
     for label in NODE_LABELS:
@@ -62,18 +43,11 @@ def export_graph(graph, out_path: str) -> dict:
 
 
 def wipe_graph(graph, index_name: str = "Chunk") -> None:
-    """Deletes ALL nodes/relationships and drops the vector index. Irreversible
-    unless you've exported first."""
     graph.query("MATCH (n) DETACH DELETE n")
     graph.query(f"DROP INDEX {index_name} IF EXISTS")
 
 
 def import_graph(graph, in_path: str) -> dict:
-    """
-    Re-creates nodes (with their saved textEmbedding vectors, no API calls)
-    and relationships from a file written by export_graph(). MERGEs on the
-    same natural keys used at ingestion time, so it's safe to re-run.
-    """
     data = json.loads(Path(in_path).read_text(encoding="utf-8"))
 
     for label, nodes in data["nodes"].items():

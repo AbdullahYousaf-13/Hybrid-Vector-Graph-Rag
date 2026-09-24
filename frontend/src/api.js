@@ -1,5 +1,3 @@
-// Relative by design: the API is same-origin in production (FastAPI serves
-// this bundle) and proxied to the backend by Vite in development.
 const API_URL = import.meta.env.VITE_API_URL ?? "/api/query";
 
 export class ApiError extends Error {

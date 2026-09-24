@@ -1,15 +1,12 @@
 from tqdm import tqdm
 
 
-# 1. Add main nodes without creating relationships
 def create_nodes(graph, data: dict, node_label: str, node_name: str):
-    # Create the main node
     main_node_query = f"""
     MERGE (main:{node_label} {{name: $name}})
     """
     graph.query(main_node_query, params={"name": node_name})
 
-    # Create section nodes only (without relationships)
     for section, content in data.items():
         query = f"""
         MERGE (s:Section {{type: $type, parent_name: $name}})
@@ -22,18 +19,7 @@ def create_nodes(graph, data: dict, node_label: str, node_name: str):
         graph.query(query, params=params)
 
 
-# 2. Add Chunks
 def ingest_Chunks(graph, chunks, node_name, node_label):
-    """
-    Ingests file chunk data into the knowledge graph by merging chunk nodes.
-
-    Args:
-        graph: A knowledge graph client or connection object that has a `query` method.
-        chunks: A list of dictionaries, each representing a file chunk with keys:
-                     'chunkId', 'text', 'source', 'formItem', and 'chunkSeqId'.
-        node_name: A string used to tag the chunk nodes.
-        node_label: The dynamic label for the chunk nodes.
-    """
     merge_chunk_node_query = f"""
     MERGE (mergedChunk:{node_label} {{chunkId: $chunkParam.chunkId}})
         ON CREATE SET
@@ -53,19 +39,8 @@ def ingest_Chunks(graph, chunks, node_name, node_label):
     print(f"Created {node_count} nodes")
 
 
-# 3. Create Relationships
-
 def create_relationship(graph, query: str):
-    """
-    Executes the provided Cypher query on the given graph.
-    
-    Parameters:
-        graph: An instance of your Neo4j connection.
-        query: A string containing a valid Cypher query.
-    """
     graph.query(query)
-
-
 
 
 def create_vector_index(graph, index_name):
@@ -80,14 +55,7 @@ def create_vector_index(graph, index_name):
     graph.query(vector_index_query)
 
 
-
-
 def embed_text(graph, api_key, node_name, batch_size=100, book_filter=None):
-    """Embed all nodes of `node_name` that lack an embedding, using Gemini.
-
-    If `book_filter` is given, only embeds Chunk nodes whose `node_name`
-    property (the book identifier set at ingestion time) matches it.
-    """
     import time
     import re
     import numpy as np
@@ -111,7 +79,6 @@ def embed_text(graph, api_key, node_name, batch_size=100, book_filter=None):
         batch = nodes[i:i + batch_size]
         texts = [r["text"] or "" for r in batch]
 
-        # retry on rate-limit / transient errors, honoring the server's suggested delay
         for attempt in range(6):
             try:
                 resp = client.models.embed_content(
@@ -132,7 +99,6 @@ def embed_text(graph, api_key, node_name, batch_size=100, book_filter=None):
                 time.sleep(wait)
 
         for rec, emb in zip(batch, resp.embeddings):
-            # gemini-embedding-001 needs manual normalization for non-3072 dims
             v = np.array(emb.values, dtype=float)
             v = (v / np.linalg.norm(v)).tolist()
             graph.query(
@@ -142,6 +108,6 @@ def embed_text(graph, api_key, node_name, batch_size=100, book_filter=None):
                 """,
                 params={"node_id": rec["node_id"], "vector": v},
             )
-        time.sleep(2)  # stay comfortably under free-tier RPM
+        time.sleep(2)
 
     print("Finished embedding update.")

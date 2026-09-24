@@ -3,11 +3,6 @@ import { ChevronDown, Code2, FileText } from "lucide-react";
 import { cleanChunk } from "../utils/formatAnswer.js";
 import { cx } from "../utils/cx.js";
 
-/**
- * Shows what the retriever actually did: the generated Cypher (graph) and/or
- * the retrieved chunks (vector). Hybrid answers can carry both. Collapsed by
- * default so the answer stays the focus.
- */
 export default function DetailsPanel({ details }) {
   const [open, setOpen] = useState(false);
 

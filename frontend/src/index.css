@@ -1,6 +1,5 @@
 @import "tailwindcss";
 
-/* Fan recreation of the film-title lettering, self-hosted (personal use). */
 @font-face {
   font-family: "Harry Potter";
   src: url("/fonts/harry-potter.woff") format("woff");
@@ -10,30 +9,25 @@
 }
 
 @theme {
-  /* Night */
   --color-night-950: #07060b;
   --color-night-900: #100d17;
   --color-night-800: #1a1524;
 
-  /* Parchment surfaces */
   --color-parchment-50: #fbf5e6;
   --color-parchment-100: #f4ebd3;
   --color-parchment-200: #ebdfc0;
   --color-parchment-300: #d9c79c;
   --color-parchment-400: #bfa671;
 
-  /* Ink */
   --color-ink-900: #1b140c;
   --color-ink-800: #2a2015;
   --color-ink-600: #55452f;
   --color-ink-400: #7d6b52;
 
-  /* Gold */
   --color-gold-300: #e8c766;
   --color-gold-400: #d3a625;
   --color-gold-600: #9c7714;
 
-  /* Hogwarts houses: deep tones for fills, light tones for text on night */
   --color-gryffindor: #740001;
   --color-slytherin: #1a472a;
   --color-ravenclaw: #0e1a40;
@@ -42,13 +36,11 @@
   --color-slytherin-light: #7fcf9a;
   --color-ravenclaw-light: #8ea5e6;
 
-  /* Heraldic ribbon tones: deep house colours, lifted to read on night */
   --color-gryffindor-ribbon: #8c1512;
   --color-slytherin-ribbon: #1f5c38;
   --color-ravenclaw-ribbon: #233c7a;
   --color-hufflepuff-ribbon: #b8912a;
 
-  /* Muted text on glass */
   --color-mist: #b9ad93;
 
   --font-title: "Harry Potter", "Cinzel Decorative", Georgia, serif;
@@ -60,7 +52,6 @@ html {
   background: var(--color-night-950);
 }
 
-/* Body stays transparent so the fixed .backdrop (z-index -1) shows through. */
 body {
   margin: 0;
   min-height: 100vh;
@@ -68,8 +59,6 @@ body {
   color: var(--color-parchment-100);
   background: transparent;
 }
-
-/* ---------- Night-library backdrop ---------- */
 
 .backdrop {
   position: fixed;
@@ -168,8 +157,6 @@ body {
   }
 }
 
-/* ---------- Smoked-glass panel ---------- */
-
 .panel {
   position: relative;
   isolation: isolate;
@@ -189,7 +176,6 @@ body {
     0 12px 28px -10px rgba(0, 0, 0, 0.6);
 }
 
-/* Fine grain so the glass reads as material rather than a flat fill. */
 .panel::before {
   content: "";
   position: absolute;
@@ -202,21 +188,12 @@ body {
   background-size: 240px 240px;
 }
 
-/* ---------- Crest ---------- */
-
-/*
- * The crest is dark antique metal sitting on a dark backdrop, so it gets a
- * small brightness lift and a soft shadow to separate from it.
- */
 .crest {
   filter: brightness(1.18) contrast(1.08) saturate(1.12)
     drop-shadow(0 6px 18px rgba(0, 0, 0, 0.75))
     drop-shadow(0 0 16px rgba(0, 0, 0, 0.55));
 }
 
-/* ---------- Typography helpers ---------- */
-
-/* Text that sits directly on the photo needs its own shadow to stay readable. */
 .legible {
   text-shadow:
     0 1px 2px rgba(0, 0, 0, 0.9),
@@ -230,7 +207,6 @@ body {
     0 2px 0 rgba(0, 0, 0, 0.45);
 }
 
-/* Contain the floated letter, so a short first paragraph doesn't let it push the next block sideways. */
 .drop-cap {
   display: flow-root;
 }
@@ -244,8 +220,6 @@ body {
   color: var(--color-gold-300);
   text-shadow: 0 0 14px rgba(211, 166, 37, 0.35);
 }
-
-/* ---------- Scrolling helpers ---------- */
 
 .swipe-x {
   overflow-x: auto;

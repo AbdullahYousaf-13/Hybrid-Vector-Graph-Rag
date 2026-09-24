@@ -1,8 +1,3 @@
-/**
- * Turns the model's markdown-style answer into blocks: headings (`## x` or a
- * line that is only `**x**`), bullet lists (`-`, `*`), numbered lists (`1.`),
- * and paragraphs (consecutive plain lines, split by blank lines).
- */
 export function parseAnswer(raw) {
   const blocks = [];
   let paragraph = [];
@@ -51,22 +46,12 @@ function stripBold(text) {
   return text.replace(/^\*\*(.+)\*\*$/, "$1");
 }
 
-/**
- * Neo4jVector's `from_existing_graph` prefixes every chunk with the property
- * name it embedded ("text: ..."), which is plumbing noise to a reader.
- */
 export function cleanChunk(chunk) {
   return String(chunk ?? "")
     .trim()
     .replace(/^text:\s*/i, "");
 }
 
-/**
- * Splits `**bold**` and `*italic*` runs out of a string so they render as
- * <strong>/<em> instead of leaking literal asterisks (the LLM writes both
- * markdown-style; only ** was ever handled, so a lone *word* passed through
- * as-is).
- */
 export function parseInline(text) {
   return String(text)
     .split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g)

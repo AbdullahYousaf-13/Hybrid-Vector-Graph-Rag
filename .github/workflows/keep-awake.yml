@@ -1,9 +1,3 @@
-# Render's free tier sleeps after ~15 min without traffic, and the next visitor then waits
-# ~40s for it to wake. Pinging the health endpoint every 10 min keeps it awake. The health
-# check also reads the quota from Neo4j, which stops Aura Free from pausing after 3 idle days.
-#
-# Set the site URL once under Settings > Secrets and variables > Actions > Variables as
-# RENDER_URL (e.g. https://your-service.onrender.com, no trailing slash).
 name: Keep Render awake
 
 on:

@@ -16,7 +16,6 @@ export default function App() {
 
   const loading = status === "loading";
 
-  // Suggestions only prefill the form; the user still presses Ask.
   function handlePick(suggestion) {
     setQuestion(suggestion.text);
     setMode(suggestion.mode);

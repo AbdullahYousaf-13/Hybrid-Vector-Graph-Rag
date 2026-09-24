@@ -1,13 +1,3 @@
-"""
-HTTP API in front of the RAG pipeline, which also serves the built frontend.
-
-Local development (frontend runs separately on Vite, which proxies /api here):
-
-    uvicorn backend.app:app --reload --port 8001
-
-In production the frontend is built to frontend/dist and served from this same
-process, so there is one origin and no CORS involved.
-"""
 import sys
 import time
 import logging
@@ -29,7 +19,6 @@ from rag.quota import QuotaExceededError, daily_limiter
 
 app = FastAPI()
 
-# Only needed when the Vite dev server calls this directly rather than proxying.
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"http://localhost:\d+",
@@ -39,8 +28,6 @@ app.add_middleware(
 
 graph, _, _ = load_neo4j_graph()
 
-# Build the vector store now (~4s) so the first question after a (re)start doesn't pay for it.
-# If it fails here, query_vector_rag still builds it lazily on first use.
 try:
     get_vector_store("Chunk", "Chunk", "text", "textEmbedding")
 except Exception:
@@ -63,7 +50,6 @@ def _read_quota() -> dict:
 
 
 def _gemini_busy(error: BaseException) -> bool:
-    """True for Gemini's temporary 503 overload / 429 rate-limit errors, however LangChain wrapped them."""
     while error is not None:
         text = str(error)
         if "UNAVAILABLE" in text or "RESOURCE_EXHAUSTED" in text:
@@ -74,7 +60,6 @@ def _gemini_busy(error: BaseException) -> bool:
 
 @app.get("/api/health")
 def health():
-    """Cheap liveness check: no LLM call, no quota cost. Used as Render's health check."""
     return {"status": "ok", "quota": _read_quota()}
 
 
@@ -113,6 +98,5 @@ def query(request: QueryRequest):
         raise HTTPException(status_code=500, detail="Internal error while answering the question.")
 
 
-# Mounted last so it never shadows /api/*. html=True serves index.html at "/".
 if FRONTEND_DIST.is_dir():
     app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

@@ -9,10 +9,6 @@ import {
   Wand2,
 } from "lucide-react";
 
-/**
- * Retrieval modes exposed by the backend. Tailwind class strings are written
- * out in full (never interpolated) so the compiler can see them.
- */
 export const MODES = [
   {
     id: "vector",
@@ -51,10 +47,6 @@ export const MODES = [
 
 export const DEFAULT_MODE = "hybrid";
 
-/**
- * "Ask Away" carries no presets; it is the free-form path and the default tab.
- * Every preset question below was verified against this backend.
- */
 export const CATEGORIES = [
   {
     id: "ask-away",
@@ -133,5 +125,4 @@ export const CATEGORIES = [
   },
 ];
 
-/** Backend guardrail: questions over 300 characters are rejected with a 400. */
 export const MAX_QUESTION_LENGTH = 300;

@@ -1,6 +1,5 @@
 import { cx } from "../utils/cx.js";
 
-/** Symmetrical gold flourish: two scrolling curves meeting at a diamond. */
 export function Divider({ className }) {
   return (
     <svg viewBox="0 0 320 24" className={cx("h-6", className)} aria-hidden="true" fill="none">
@@ -25,7 +24,6 @@ export function Divider({ className }) {
   );
 }
 
-/** One corner flourish; rotate it per corner. */
 export function CornerFlourish({ className }) {
   return (
     <svg viewBox="0 0 48 48" className={className} aria-hidden="true" fill="none">
@@ -53,7 +51,6 @@ export function CornerFlourish({ className }) {
   );
 }
 
-/** Wax seal: a deep-red disc with a gold bolt, used as the Ask button's mark. */
 export function WaxSeal({ className }) {
   return (
     <svg viewBox="0 0 32 32" className={className} aria-hidden="true">

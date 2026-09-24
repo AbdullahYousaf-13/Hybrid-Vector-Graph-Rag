@@ -2,11 +2,6 @@ import { Check } from "lucide-react";
 import { MODES } from "../constants.js";
 import { cx } from "../utils/cx.js";
 
-/**
- * The native radio is visually hidden (`sr-only`) and the card itself is the
- * one selection indicator; there is deliberately no second dot competing
- * with it. Keyboard and screen-reader behaviour stays native.
- */
 export default function ModeSelector({ value, onChange, disabled }) {
   return (
     <fieldset className="min-w-0">

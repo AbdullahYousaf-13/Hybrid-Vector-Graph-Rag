@@ -2,11 +2,6 @@ import { useState } from "react";
 import { CATEGORIES, MODES } from "../constants.js";
 import { cx } from "../utils/cx.js";
 
-/**
- * Tabs of suggested questions. The first tab ("Ask Away") intentionally has no
- * presets; it's the free-form path. Picking a suggestion only fills the
- * question box and switches the mode; it never sends the request.
- */
 export default function CategoryTabs({ onPick, disabled }) {
   const [activeId, setActiveId] = useState(CATEGORIES[0].id);
   const active = CATEGORIES.find((category) => category.id === activeId) ?? CATEGORIES[0];

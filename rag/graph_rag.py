@@ -5,7 +5,7 @@ from neo4j.exceptions import CypherSyntaxError
 import textwrap
 import re
 
-from rag.quota import daily_limiter
+from rag.quota import QUOTA_LABEL, daily_limiter
 
 
 def _validate_and_sanitize_question(question: str) -> str:
@@ -161,6 +161,7 @@ def generate_cypher_query(
         allow_dangerous_requests=True,
         return_intermediate_steps=True,
         top_k=5,
+        exclude_types=[QUOTA_LABEL],
     )
 
     # Guardrail: intercept the exact Cypher the chain is about to run against

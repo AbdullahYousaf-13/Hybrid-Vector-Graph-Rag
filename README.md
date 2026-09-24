@@ -66,7 +66,8 @@ it uses in production.
 Open `main.ipynb` and run the cells — it calls the same `rag/` functions the
 API uses.
 
-Both paths share a single daily request quota (`.daily_quota.json`, 250/day)
+Both paths share a single daily request quota (250/day, stored as a `DailyQuota`
+node in Neo4j so it survives restarts and redeploys; resets at midnight UTC)
 and the same security/cost guardrails — see `docs/Guardrails.md`.
 
 ## Deploying (Render)
@@ -92,9 +93,16 @@ Three things to expect on the free tier:
   at startup) before it even begins answering.
 - **Neo4j Aura Free pauses after ~3 days of inactivity.** The deployed app will
   error until you resume the instance from the Aura console.
-- **`.daily_quota.json` does not survive restarts** on Render's ephemeral disk, so
-  the 250/day guardrail resets whenever the service restarts. Anyone with the URL
-  spends your Gemini quota, and a hybrid question costs 3 requests.
+- **Anyone with the URL spends your Gemini quota.** The 250/day guardrail is shared
+  by local runs and the deploy, and a hybrid question costs 3 requests. Gemini's free
+  tier also allows only 15 calls per minute, and a hybrid question makes 4.
+
+**Keeping it awake:** `.github/workflows/keep-awake.yml` pings `/api/health` every
+10 minutes so the free service doesn't sleep (and Aura Free doesn't pause). It
+does nothing until you add the site URL as a repository variable: Settings >
+Secrets and variables > Actions > Variables > `RENDER_URL`
+(e.g. `https://your-service.onrender.com`). GitHub can delay scheduled runs by a
+few minutes, so an occasional cold start is still possible.
 
 ## Using your own data
 

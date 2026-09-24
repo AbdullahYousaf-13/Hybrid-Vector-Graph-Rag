@@ -24,7 +24,7 @@ def _validate_and_sanitize_question(question: str) -> str:
 _vector_stores = {}
 
 
-def _get_vector_store(index_name, node_label, source_property, embedding_property):
+def get_vector_store(index_name, node_label, source_property, embedding_property):
     key = (index_name, node_label, source_property, embedding_property)
     if key not in _vector_stores:
         _vector_stores[key] = Neo4jVector.from_existing_graph(
@@ -65,7 +65,7 @@ def query_vector_rag(
     # 1. Track against shared persistent daily quota pool
     daily_limiter.check_and_increment()
 
-    vector_store = _get_vector_store(
+    vector_store = get_vector_store(
         vector_index_name, vector_node_label, vector_source_property, vector_embedding_property
     )
 

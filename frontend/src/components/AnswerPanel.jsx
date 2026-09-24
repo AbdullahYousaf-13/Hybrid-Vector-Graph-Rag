@@ -129,10 +129,9 @@ function AnswerSheet({ result, asked }) {
         <span className="inline-flex items-center gap-1.5">
           <Clock className="size-3.5" aria-hidden="true" />
           Answered in {result.total_seconds.toFixed(1)}s
-          <span className="text-mist/70">(retrieval {result.time_seconds}s)</span>
         </span>
 
-        {quota && (
+        {quota?.used != null && (
           <span className="inline-flex items-center gap-1.5">
             <Gauge className="size-3.5" aria-hidden="true" />
             {quota.used}/{quota.max} requests used today

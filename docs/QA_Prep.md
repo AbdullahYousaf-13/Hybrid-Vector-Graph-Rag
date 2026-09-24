@@ -66,8 +66,8 @@ then, still inside the same loop iteration:
 *Rejects empty/too-long questions and strips stray newlines/tabs.*
 → `daily_limiter.check_and_increment()`
 *Counts this against the shared daily LLM-call quota.*
-→ `Neo4jVector.from_existing_graph(...)` → `vector_store`
-*Points at the existing Chunk vector index built during ingestion.*
+→ `get_vector_store(...)` → `vector_store`
+*Returns the cached connection to the Chunk vector index (built once at server startup via `Neo4jVector.from_existing_graph`, not on every question).*
 → `vector_store.as_retriever(k=6).invoke(question)` → `docs`
 *Embeds the question and returns the 6 most similar chunks.*
 → build `context` from `docs`
@@ -91,7 +91,7 @@ then, still inside the same loop iteration:
 → patches `graph.query` to `_guarded_query` (→ `_enforce_readonly_cypher` → `_ensure_cypher_limit` → real `graph.query`)
 *Wraps the one method that actually executes Cypher so every query gets checked before it runs.*
 → `cypher_chain.invoke({"query": question})` → internally: LLM generates Cypher → `_guarded_query(cypher)` runs it → LLM turns rows into an answer → `response`
-*The LLM writes Cypher for the question, the guarded query runs it safely, then a second LLM call turns the returned rows into a sentence.*
+*The LLM writes Cypher for the question, the guarded query runs it safely, then a second LLM call turns the returned rows (at most 5) into a sentence. If the Cypher is invalid (`CypherSyntaxError`), it retries once, then raises a `ValueError` the user sees as a clear 400.*
 → restores real `graph.query`
 *Un-patches the method so later calls aren't affected.*
 → return `{"answer": ..., "cypher_query": ...}`
@@ -102,10 +102,8 @@ then, still inside the same loop iteration:
 *Answers by running both modes above and reconciling their answers.*
 → `_validate_and_sanitize_question(question)`
 *Same input guardrail, done once for both sub-calls.*
-→ `query_vector_rag(...)` (full chain above) → `vector_result`
-*Runs the entire vector mode flow as its own independent attempt.*
-→ `generate_cypher_query(...)` (full chain above) → `graph_result`
-*Runs the entire graph mode flow as its own independent attempt.*
+→ `ThreadPoolExecutor` runs `_run(query_vector_rag, ...)` and `_run(generate_cypher_query, ...)` **at the same time** → `vector_result`, `graph_result`
+*Both full mode flows run in parallel, so the wait is the slower of the two, not both added together. `_run` catches each side's error instead of raising, and a failed side gets logged.*
 → if both failed → raise
 *Only real failure case — nothing usable came back from either side.*
 → if one failed → return the other's answer directly (prefixed), **stop here**

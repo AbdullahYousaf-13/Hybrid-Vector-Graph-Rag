@@ -10,7 +10,6 @@ process, so there is one origin and no CORS involved.
 """
 import sys
 import time
-import json
 import logging
 from pathlib import Path
 
@@ -23,9 +22,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from KG.config import load_neo4j_graph
-from rag.vector_rag import query_vector_rag
+from rag.vector_rag import get_vector_store, query_vector_rag
 from rag.graph_rag import generate_cypher_query
 from rag.hybrid_rag import query_hybrid_rag
+from rag.quota import daily_limiter
 
 app = FastAPI()
 
@@ -39,8 +39,13 @@ app.add_middleware(
 
 graph, _, _ = load_neo4j_graph()
 
-QUOTA_FILE = REPO_ROOT / ".daily_quota.json"
-QUOTA_MAX = 250
+# Build the vector store now (~4s) so the first question after a (re)start doesn't pay for it.
+# If it fails here, query_vector_rag still builds it lazily on first use.
+try:
+    get_vector_store("Chunk", "Chunk", "text", "textEmbedding")
+except Exception:
+    logging.getLogger("uvicorn.error").exception("Vector store warm-up failed; will retry on first query")
+
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
 
@@ -51,10 +56,10 @@ class QueryRequest(BaseModel):
 
 def _read_quota() -> dict:
     try:
-        data = json.loads(QUOTA_FILE.read_text())
-        return {"used": data.get("count", 0), "max": QUOTA_MAX}
+        return daily_limiter.usage()
     except Exception:
-        return {"used": 0, "max": QUOTA_MAX}
+        logging.getLogger("uvicorn.error").exception("Could not read the daily quota")
+        return {"used": None, "max": daily_limiter.max_rpd}
 
 
 @app.get("/api/health")

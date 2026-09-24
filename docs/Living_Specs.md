@@ -93,7 +93,7 @@ rag/hybrid_rag.py    query_hybrid_rag(question, graph, vector_index_name, vector
                      -> calls query_vector_rag and generate_cypher_query UNMODIFIED, then
                      reconciles their two answers with a third gemini-3.5-flash-lite call;
                      degrades to a partial answer if only one source succeeds, raises only if
-                     both fail; shares the same .daily_quota.json (up to 3 requests/call)
+                     both fail; shares the same Neo4j quota counter (up to 3 requests/call)
                      -> {"answer": str, "vector_chunks": list[str] | None,
                          "graph_cypher_query": str | None}
 prep.ipynb       one-time ingestion pipeline (§6)
@@ -108,7 +108,8 @@ data/harry_potter_books.csv  raw source (gitignored — regenerate Book_*.json w
                               KG/csv_to_json.py rather than committing the CSV)
 backend/app.py   FastAPI wrapper over the three rag/ entry points: one POST
                  /api/query routed on a "mode" field, plus per-call elapsed
-                 time and today's quota count read back from .daily_quota.json
+                 time and today's quota count read back from Neo4j (rag/quota.py);
+                 builds the vector store at startup so the first question is fast
 backend/requirements.txt
 frontend/        Vite + React (plain JS) + Tailwind v4 web UI for the API;
                  components/, hooks/useAsk.js (request + live elapsed timer),
@@ -259,8 +260,8 @@ question
   -> ChatPromptTemplate (<user_input> tag marks it untrusted) | gemini-3.5-flash-lite | StrOutputParser
   -> answer (wrapped to 60 cols)
 
-daily_limiter.check_and_increment() runs before all of the above — reads/
-writes .daily_quota.json (shared with rag/graph_rag.py), raises if today's count
+daily_limiter.check_and_increment() runs before all of the above — increments
+the DailyQuota node in Neo4j (rag/quota.py, shared by all modes), raises if today's count
 has already reached max_rpd (250)
 ```
 
@@ -298,7 +299,7 @@ under either type depending on the pair, so querying only one direction
 silently misses results.
 
 `daily_limiter.check_and_increment()` runs before all of the above, sharing
-the same `.daily_quota.json` counter as `rag/vector_rag.py`. `graph.query` is
+the same Neo4j quota counter (`rag/quota.py`) as `rag/vector_rag.py`. `graph.query` is
 temporarily wrapped for the duration of `cypher_chain.invoke(...)` — every
 generated Cypher string passes through `_enforce_readonly_cypher()` (raises
 on write keywords) and `_ensure_cypher_limit()` (adds `LIMIT 25` if missing)
@@ -344,7 +345,7 @@ the "don't guess" honesty rule already established in both existing paths'
 prompts, not a new invented one.
 
 **Quota:** `query_vector_rag` and `generate_cypher_query` each already
-increment the shared `.daily_quota.json` counter once internally; the
+increment the shared Neo4j quota counter once internally; the
 synthesis step increments it a third time, immediately before its own LLM
 call (not at the top of `query_hybrid_rag`), so a quota hit there still
 preserves whichever partial answer(s) were already gathered. **One hybrid
@@ -406,4 +407,5 @@ wired in via a `graph.query` wrapper (previously defined but dead code).
 - [x] Replace estimated token-budget cap with a real request-count (RPD) guardrail.
 - [x] Share one quota tracker between `rag/graph_rag.py` and `rag/vector_rag.py` instead of two independent ones.
 - [x] Persist the daily counter (file) so it survives a kernel/process restart.
+- [x] Move the daily counter into Neo4j so it also survives Render restarts/redeploys and is shared with local runs.
 - [x] Wire `_enforce_readonly_cypher()` and `_ensure_cypher_limit()` into `generate_cypher_query()` via a `graph.query` wrapper.

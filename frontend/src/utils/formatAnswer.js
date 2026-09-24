@@ -1,41 +1,54 @@
 /**
- * The backend runs every answer through Python's `textwrap.fill(..., 60)`, so
- * it arrives hard-wrapped at 60 columns with any bullets flattened into inline
- * " * " markers. Rendering that verbatim looks broken in a wide column, so
- * rebuild the intended structure: blank lines separate paragraphs, single
- * newlines are just the wrap, and " * " starts a list item.
+ * Turns the model's markdown-style answer into blocks: headings (`## x` or a
+ * line that is only `**x**`), bullet lists (`-`, `*`), numbered lists (`1.`),
+ * and paragraphs (consecutive plain lines, split by blank lines).
  */
 export function parseAnswer(raw) {
-  const text = String(raw ?? "").trim();
-  if (!text) return [];
+  const blocks = [];
+  let paragraph = [];
 
-  return text
-    .split(/\n\s*\n/)
-    .map((block) =>
-      block
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .join(" ")
-    )
-    .filter(Boolean)
-    .flatMap(splitBullets);
+  const flushParagraph = () => {
+    if (paragraph.length) blocks.push({ type: "paragraph", text: paragraph.join(" ") });
+    paragraph = [];
+  };
+
+  const addItem = (ordered, text, number) => {
+    const last = blocks[blocks.length - 1];
+    if (last?.type === "list" && last.ordered === ordered) {
+      last.items.push(text);
+    } else {
+      blocks.push({ type: "list", ordered, start: number ?? 1, items: [text] });
+    }
+  };
+
+  for (const rawLine of String(raw ?? "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    let match;
+
+    if (!line) {
+      flushParagraph();
+    } else if ((match = line.match(/^#{1,6}\s+(.+)$/))) {
+      flushParagraph();
+      blocks.push({ type: "heading", text: stripBold(match[1]) });
+    } else if ((match = line.match(/^\*\*([^*]+)\*\*:?$/))) {
+      flushParagraph();
+      blocks.push({ type: "heading", text: match[1] });
+    } else if ((match = line.match(/^[-*•]\s+(.+)$/))) {
+      flushParagraph();
+      addItem(false, match[1]);
+    } else if ((match = line.match(/^(\d+)[.)]\s+(.+)$/))) {
+      flushParagraph();
+      addItem(true, match[2], Number(match[1]));
+    } else {
+      paragraph.push(line);
+    }
+  }
+  flushParagraph();
+  return blocks;
 }
 
-function splitBullets(paragraph) {
-  // `**bold**` markers can't match here: they have no space after the asterisk.
-  const parts = paragraph.split(/(?:^|\s)\*\s+/);
-  const items = parts
-    .slice(1)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (items.length === 0) return [{ type: "paragraph", text: paragraph }];
-
-  const lead = parts[0].trim();
-  const blocks = lead ? [{ type: "paragraph", text: lead }] : [];
-  blocks.push({ type: "list", items });
-  return blocks;
+function stripBold(text) {
+  return text.replace(/^\*\*(.+)\*\*$/, "$1");
 }
 
 /**

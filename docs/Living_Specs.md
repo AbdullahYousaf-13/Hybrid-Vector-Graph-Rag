@@ -114,8 +114,8 @@ backend/requirements.txt
 frontend/        Vite + React (plain JS) + Tailwind v4 web UI for the API;
                  components/, hooks/useAsk.js (request + live elapsed timer),
                  constants.js (retrieval modes + the verified suggested
-                 questions), utils/formatAnswer.js (un-wraps the backend's
-                 textwrap.fill(60) output back into paragraphs/lists)
+                 questions), utils/formatAnswer.js (turns the model's markdown lines
+                 into headings, lists and paragraphs)
 frontend/public/ self-hosted title font + background image + crest
 docs/            Living_Specs.md (this file), Flow.md, Guardrails.md
 ```
@@ -258,7 +258,7 @@ question
   -> retriever.invoke(question)               # top k=6 chunks by cosine (capped for cost)
   -> stuff chunk text into <context>, truncate to 8000 chars
   -> ChatPromptTemplate (<user_input> tag marks it untrusted) | gemini-3.1-flash-lite | StrOutputParser
-  -> answer (wrapped to 60 cols)
+  -> answer (model's text as-is, line breaks kept)
 
 daily_limiter.check_and_increment() runs before all of the above — increments
 the DailyQuota node in Neo4j (rag/quota.py, shared by all modes), raises if today's count
@@ -277,7 +277,7 @@ question
   -> GraphCypherQAChain.from_llm(gemini-3.1-flash-lite, allow_dangerous_requests=True)
        -> graph.query wrapped: _enforce_readonly_cypher, _ensure_cypher_limit
        -> LLM writes Cypher -> guarded run on graph -> LLM summarizes rows
-  -> answer (wrapped to 60 cols)
+  -> answer (model's text as-is, line breaks kept)
 ```
 
 `Entity` names are **not** in the allow-list (too many to usefully enumerate), so the
@@ -328,7 +328,7 @@ question
   -> only one succeeded? -> return it directly, prefixed "(<other> unavailable — ...)"
   -> both succeeded -> HYBRID_SYNTHESIS_TEMPLATE | gemini-3.1-flash-lite | StrOutputParser
        -> synthesis itself fails? -> fall back to showing both raw answers
-  -> answer (wrapped to 60 cols)
+  -> answer (model's text as-is, line breaks kept)
 ```
 
 Deliberately treats `rag/vector_rag.py` and `rag/graph_rag.py` as black boxes — it never

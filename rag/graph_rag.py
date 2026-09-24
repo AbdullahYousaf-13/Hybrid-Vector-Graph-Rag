@@ -2,7 +2,6 @@ from langchain_neo4j import GraphCypherQAChain
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from neo4j.exceptions import CypherSyntaxError
-import textwrap
 import re
 
 from rag.quota import QUOTA_LABEL, daily_limiter
@@ -192,6 +191,6 @@ def generate_cypher_query(
     cypher_query = intermediate_steps[0].get("query", "") if intermediate_steps else ""
 
     return {
-        "answer": textwrap.fill(raw_result, 60),
+        "answer": raw_result.strip(),
         "cypher_query": cypher_query,
     }

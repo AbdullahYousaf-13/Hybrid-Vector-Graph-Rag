@@ -2,7 +2,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_neo4j import Neo4jVector
-import textwrap
 from dotenv import load_dotenv
 import os
 import re
@@ -97,6 +96,6 @@ def query_vector_rag(
     result = chain.invoke({"context": context, "input": sanitized_question})
 
     return {
-        "answer": textwrap.fill(result, 60),
+        "answer": result.strip(),
         "chunks": [d.page_content for d in docs],
     }

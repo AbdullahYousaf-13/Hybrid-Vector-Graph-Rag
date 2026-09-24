@@ -105,24 +105,44 @@ function AnswerSheet({ result, asked }) {
 
       <div className="mt-5 space-y-3.5 text-[19px] leading-[1.6] text-parchment-50">
         {notice && <p className="text-base text-mist italic">{notice}</p>}
-        {blocks.map((block, index) =>
-          block.type === "list" ? (
-            <ul key={index} className="space-y-2 pl-1">
-              {block.items.map((item, itemIndex) => (
-                <li key={itemIndex} className="flex gap-2.5">
-                  <span className="mt-3 size-1.5 shrink-0 rotate-45 bg-gold-400" aria-hidden="true" />
-                  <span>
-                    <RichText text={item} />
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
+        {blocks.map((block, index) => {
+          if (block.type === "heading") {
+            return (
+              <h3
+                key={index}
+                className="pt-2 font-display text-sm font-semibold tracking-[0.14em] text-gold-300 uppercase"
+              >
+                {block.text}
+              </h3>
+            );
+          }
+          if (block.type === "list") {
+            const List = block.ordered ? "ol" : "ul";
+            return (
+              <List key={index} className="space-y-2 pl-1">
+                {block.items.map((item, itemIndex) => (
+                  <li key={itemIndex} className="flex gap-2.5">
+                    {block.ordered ? (
+                      <span className="min-w-6 shrink-0 font-semibold text-gold-400" aria-hidden="true">
+                        {block.start + itemIndex}.
+                      </span>
+                    ) : (
+                      <span className="mt-3 size-1.5 shrink-0 rotate-45 bg-gold-400" aria-hidden="true" />
+                    )}
+                    <span>
+                      <RichText text={item} />
+                    </span>
+                  </li>
+                ))}
+              </List>
+            );
+          }
+          return (
             <p key={index} className={cx(index === 0 && "drop-cap")}>
               <RichText text={block.text} />
             </p>
-          )
-        )}
+          );
+        })}
       </div>
 
       <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-gold-400/20 pt-3.5 text-sm text-mist">

@@ -93,7 +93,7 @@ flowchart LR
 | 3   | Embed the question   | same call's `embedding=`                                    | **Gemini** `gemini-embedding-001` via `langchain-google-genai` `GoogleGenerativeAIEmbeddings` | task `RETRIEVAL_QUERY`, **768 dims** (must match the stored vectors)                                                                                            |
 | 4   | Find nearest chunks  | `.as_retriever(search_kwargs={"k": 6}).invoke(...)`         | Neo4j `db.index.vector.queryNodes`                                                            | top **6** by cosine similarity — raised from 3 once the corpus grew to 7 books, since 3 chunks × 2000 chars was already exceeding the old 3500-char context cap |
 | 5   | Build context        | `"\n\n".join(...)`, then truncate                           | plain Python                                                                                  | **guardrail**: context string hard-capped at 8000 chars (raised from 3500 alongside `k`) to bound the prompt sent to the LLM                                    |
-| 6   | Write the answer     | `prompt \| llm \| StrOutputParser()`                     | **Gemini** `gemini-3.1-flash-lite` via `ChatGoogleGenerativeAI`, LCEL chain | system rule: answer only from context, else "I don't know"; the human message wraps the question in `<user_input>` tags marked untrusted (**prompt-injection guardrail**); `StrOutputParser` flattens Gemini's list-shaped output; `textwrap.fill(60)` wraps it |
+| 6   | Write the answer     | `prompt \| llm \| StrOutputParser()`                     | **Gemini** `gemini-3.1-flash-lite` via `ChatGoogleGenerativeAI`, LCEL chain | system rule: answer only from context, else "I don't know"; the human message wraps the question in `<user_input>` tags marked untrusted (**prompt-injection guardrail**); `StrOutputParser` flattens Gemini's list-shaped output; the text is returned as-is so its line breaks (lists, headings) survive |
 
 
 
@@ -117,7 +117,7 @@ def query_vector_rag(question, ...):
     prompt = "...<user_input>{input}</user_input>..."                     # marks input untrusted
     chain  = prompt | ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite") | StrOutputParser()  # 6
     result = chain.invoke({"context": context, "input": question})
-    return {"answer": textwrap.fill(result, 60), "chunks": [c.page_content for c in chunks]}
+    return {"answer": result.strip(), "chunks": [c.page_content for c in chunks]}
 ```
 
 ---
@@ -150,7 +150,7 @@ flowchart LR
 | 2   | Collect real names              | `_entity_name_catalog(graph)` (`rag/graph_rag.py`)                                 | Cypher `MATCH (n) WHERE n:Person OR n:Event OR n:Book`                    | **guardrail**: allow-list so the LLM uses e.g. `Book_1_Philosopher_s_Stone` and doesn't invent slugs                                                                                                                                                                                                                                                                                                                                                                          |
 | 3   | Build the prompt                | `PromptTemplate` (`langchain-core`)                                                | `CYPHER_GENERATION_TEMPLATE`                                              | fills in `{schema}` (from Neo4j), `{entity_names}`, few-shot examples, and wraps `{question}` in `<user_question>` tags marked untrusted (**prompt-injection guardrail**); also instructs `Entity` name matching via case-insensitive `CONTAINS` (not exact equality — `Entity` names aren't in the allow-list) and to check both `PARENT_OF` and `CHILD_OF` directions (via `UNION`) for any parent/child question, since the same fact can be stored under either direction |
 | 4   | Write + guarded run + summarize | `GraphCypherQAChain.from_llm(...)` (`langchain-neo4j`), with `graph.query` wrapped | **Gemini** `gemini-3.1-flash-lite` via `ChatGoogleGenerativeAI`           | chain internally: LLM writes Cypher → the wrapped `graph.query` runs `_enforce_readonly_cypher()` (raises on `CREATE`/`DELETE`/`SET`/etc.) then `_ensure_cypher_limit()` (adds `LIMIT 25` if missing) → the *checked* query actually executes → LLM turns rows into a sentence                                                                                                                                                                                                |
-| 5   | Format                          | `textwrap.fill(response["result"], 60)`                                            | plain Python                                                              | wrap to 60 columns                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 5   | Format                          | `response["result"].strip()`                                            | plain Python                                                              | returned as-is so the model's line breaks survive                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 
 
@@ -184,7 +184,7 @@ def generate_cypher_query(question, graph):
         graph.query = original_query                              #     always restore
 
     cypher = response["intermediate_steps"][0]["query"]
-    return {"answer": textwrap.fill(response["result"], 60), "cypher_query": cypher}  # 5
+    return {"answer": response["result"].strip(), "cypher_query": cypher}  # 5
 ```
 
 ---
@@ -217,7 +217,7 @@ flowchart LR
 | 1   | Call both paths        | `query_vector_rag(...)`, `generate_cypher_query(...)`   | unmodified imports from `rag/vector_rag.py`/`rag/graph_rag.py`                                                                                                                                      | each wrapped in its own `try/except` — neither path's code is touched                                                                                                                                           |
 | 2   | Handle partial failure | plain Python                                            | if only one succeeded, return it directly (prefixed `"(<other> unavailable — ...)"`) and skip synthesis entirely — no need to spend a 3rd quota request reconciling one real answer against nothing |                                                                                                                                                                                                                 |
 | 3   | Reconcile              | `HYBRID_SYNTHESIS_TEMPLATE`                             | **Gemini** `gemini-3.1-flash-lite` via `ChatGoogleGenerativeAI`, LCEL chain                                                                                                                         | only runs if both succeeded; each answer wrapped in its own `<text_search_answer>`/`<knowledge_graph_answer>` untrusted-data tag; explicit rules for agree / one-declines / conflict / both-decline (see below) |
-| 4   | Format                 | `textwrap.fill(result, 60)`                             | plain Python                                                                                                                                                                                        | same convention as the other two paths                                                                                                                                                                          |
+| 4   | Format                 | `result.strip()`                                       | plain Python                                                                                                                                                                                        | returned as-is so the model's line breaks survive; same as the other two paths                                                                                                                                                                      |
 
 
 `query_vector_rag` and `generate_cypher_query` each already increment the
@@ -270,7 +270,7 @@ def query_hybrid_rag(question, graph, ...):
         daily_limiter.check_and_increment()                       # 3rd quota request
         chain = prompt | ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite") | StrOutputParser()
         result = chain.invoke({"question": question, "vector_answer": vector_result["answer"], "graph_answer": graph_result["answer"]})
-        answer = textwrap.fill(result, 60)                        # 4
+        answer = result.strip()                                   # 4
     except Exception:
         answer = f"(Automatic synthesis unavailable — showing both raw answers)\n\nVector RAG: {vector_result['answer']}\n\nGraph RAG: {graph_result['answer']}"
 

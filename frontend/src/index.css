@@ -230,6 +230,11 @@ body {
     0 2px 0 rgba(0, 0, 0, 0.45);
 }
 
+/* Contain the floated letter, so a short first paragraph doesn't let it push the next block sideways. */
+.drop-cap {
+  display: flow-root;
+}
+
 .drop-cap::first-letter {
   float: left;
   font-family: var(--font-display);

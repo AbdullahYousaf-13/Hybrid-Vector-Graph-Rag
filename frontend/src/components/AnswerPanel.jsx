@@ -122,7 +122,8 @@ function AnswerSheet({ result, asked }) {
       <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-gold-400/20 pt-3.5 text-sm text-mist">
         <span className="inline-flex items-center gap-1.5">
           <Clock className="size-3.5" aria-hidden="true" />
-          Answered in {result.time_seconds}s
+          Answered in {result.total_seconds.toFixed(1)}s
+          <span className="text-mist/70">(retrieval {result.time_seconds}s)</span>
         </span>
 
         {quota && (

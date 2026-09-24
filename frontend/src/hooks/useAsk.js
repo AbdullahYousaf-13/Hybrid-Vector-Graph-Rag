@@ -3,8 +3,9 @@ import { askQuestion } from "../api.js";
 
 /**
  * Owns one question/answer round trip: the request, the result, and a live
- * elapsed-time counter that ticks while the request is in flight (the backend
- * reports its own authoritative `time_seconds` once the answer lands).
+ * elapsed-time counter that ticks while the request is in flight. The result
+ * carries `total_seconds` (what the user actually waited, including network and
+ * server cold start) next to the backend's `time_seconds` (retrieval only).
  */
 export function useAsk() {
   const [status, setStatus] = useState("idle"); // idle | loading | success | error
@@ -50,7 +51,7 @@ export function useAsk() {
 
       try {
         const data = await askQuestion({ question, mode, signal: controller.signal });
-        setResult(data);
+        setResult({ ...data, total_seconds: (performance.now() - start) / 1000 });
         setStatus("success");
       } catch (err) {
         if (err?.name === "AbortError") return;

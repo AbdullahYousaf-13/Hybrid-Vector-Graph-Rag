@@ -231,6 +231,29 @@ body {
   display: none;
 }
 
+@supports not selector(::-webkit-scrollbar) {
+  .gold-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(211, 166, 37, 0.55) transparent;
+  }
+}
+.gold-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.gold-scroll::-webkit-scrollbar-thumb {
+  background: rgba(211, 166, 37, 0.55);
+  border-radius: 999px;
+}
+.gold-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(232, 199, 102, 0.8);
+}
+.gold-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.gold-scroll::-webkit-scrollbar-button {
+  display: none;
+}
+
 .thin-scroll {
   scrollbar-width: thin;
   scrollbar-color: var(--color-mist) transparent;

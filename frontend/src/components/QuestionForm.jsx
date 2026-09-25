@@ -1,12 +1,31 @@
+import { useLayoutEffect, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { MAX_QUESTION_LENGTH } from "../constants.js";
 import { WaxSeal } from "./Ornament.jsx";
 import { cx } from "../utils/cx.js";
 
+const MAX_VISIBLE_LINES = 2;
+
 export default function QuestionForm({ question, onQuestionChange, onSubmit, loading }) {
   const trimmed = question.trim();
   const tooLong = question.length > MAX_QUESTION_LENGTH;
   const canSubmit = trimmed.length > 0 && !tooLong && !loading;
+  const textareaRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const style = getComputedStyle(el);
+    const lineHeight = parseFloat(style.lineHeight);
+    const chrome =
+      parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) +
+      parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    const maxHeight = lineHeight * MAX_VISIBLE_LINES + chrome;
+    el.style.height = "auto";
+    const needed = el.scrollHeight + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    el.style.height = `${Math.min(needed, maxHeight)}px`;
+    el.style.overflowY = needed > maxHeight ? "auto" : "hidden";
+  }, [question]);
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -34,7 +53,8 @@ export default function QuestionForm({ question, onQuestionChange, onSubmit, loa
 
       <textarea
         id="question"
-        rows={3}
+        ref={textareaRef}
+        rows={1}
         value={question}
         maxLength={MAX_QUESTION_LENGTH}
         disabled={loading}
@@ -42,7 +62,7 @@ export default function QuestionForm({ question, onQuestionChange, onSubmit, loa
         onKeyDown={handleKeyDown}
         placeholder="e.g. What does the invisibility cloak do?"
         className={cx(
-          "w-full resize-y rounded-sm border border-gold-400/25 bg-night-950/60 px-4 py-2.5 text-lg text-parchment-50 transition",
+          "gold-scroll block w-full resize-none rounded-sm border border-gold-400/25 bg-night-950/60 px-4 py-2.5 text-lg text-parchment-50 transition",
           "shadow-[inset_0_2px_10px_rgba(0,0,0,0.45)]",
           "placeholder:text-mist/60 placeholder:italic",
           "focus:border-gold-400/70 focus:ring-2 focus:ring-gold-400/30 focus:outline-none",

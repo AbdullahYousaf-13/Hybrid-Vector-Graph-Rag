@@ -1,9 +1,11 @@
 import json
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from KG.settings import CHUNK_OVERLAP, CHUNK_SIZE
+
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size = 2000,
-    chunk_overlap  = 200,
+    chunk_size = CHUNK_SIZE,
+    chunk_overlap  = CHUNK_OVERLAP,
     length_function = len,
     is_separator_regex = False,
 )

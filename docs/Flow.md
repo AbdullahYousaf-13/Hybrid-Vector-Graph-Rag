@@ -92,7 +92,7 @@ flowchart LR
 | 2   | Connect to the index | `Neo4jVector.from_existing_graph` (`rag/vector_rag.py`)     | `langchain-neo4j`                                                                             | points at index `Chunk`, text prop `text`, vector prop `textEmbedding`                                                                                          |
 | 3   | Embed the question   | same call's `embedding=`                                    | **Gemini** `gemini-embedding-001` via `langchain-google-genai` `GoogleGenerativeAIEmbeddings` | task `RETRIEVAL_QUERY`, **768 dims** (must match the stored vectors)                                                                                            |
 | 4   | Find nearest chunks  | `.as_retriever(search_kwargs={"k": 6}).invoke(...)`         | Neo4j `db.index.vector.queryNodes`                                                            | top **6** by cosine similarity — raised from 3 once the corpus grew to 7 books, since 3 chunks × 2000 chars was already exceeding the old 3500-char context cap |
-| 5   | Build context        | `"\n\n".join(...)`, then truncate                           | plain Python                                                                                  | **guardrail**: context string hard-capped at 16000 chars (fits all 6 chunks) to bound the prompt sent to the LLM                                    |
+| 5   | Build context        | `"\n\n".join(...)`, then truncate                           | plain Python                                                                                  | **guardrail**: context string hard-capped at `TOP_K × (CHUNK_SIZE + 100)` chars (12,600: fits all 6 chunks) to bound the prompt sent to the LLM                                    |
 | 6   | Write the answer     | `prompt \| llm \| StrOutputParser()`                     | **Gemini** `gemini-3.1-flash-lite` via `ChatGoogleGenerativeAI`, LCEL chain | system rule: answer only from context, else "I don't know"; the human message wraps the question in `<user_input>` tags marked untrusted (**prompt-injection guardrail**); `StrOutputParser` flattens Gemini's list-shaped output; the text is returned as-is so its line breaks (lists, headings) survive |
 
 
@@ -112,7 +112,7 @@ def query_vector_rag(question, ...):
             task_type="RETRIEVAL_QUERY", output_dimensionality=768),
         index_name="Chunk", ...)
     chunks  = store.as_retriever(search_kwargs={"k": 6}).invoke(question) # 4  top-6 by cosine
-    context = "\n\n".join(c.page_content for c in chunks)[:16000]         # 5  capped
+    context = "\n\n".join(c.page_content for c in chunks)[:MAX_CONTEXT_CHARS] # 5  capped
 
     prompt = "...<user_input>{input}</user_input>..."                     # marks input untrusted
     chain  = prompt | ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite") | StrOutputParser()  # 6

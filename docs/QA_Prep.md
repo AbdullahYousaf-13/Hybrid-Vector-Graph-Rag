@@ -71,7 +71,7 @@ then, still inside the same loop iteration:
 → `vector_store.as_retriever(k=6).invoke(question)` → `docs`
 *Embeds the question and returns the 6 most similar chunks.*
 → build `context` from `docs`
-*Joins those chunks into one context string, truncated to 16000 chars.*
+*Joins those chunks into one context string, truncated to TOP_K × (CHUNK_SIZE + 100) chars.*
 → `chain = prompt | llm | StrOutputParser()` → `chain.invoke(...)` → `result`
 *Asks the LLM to answer the question using only that context.*
 → return `{"answer": ..., "chunks": ...}`

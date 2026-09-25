@@ -6,10 +6,14 @@ from dotenv import load_dotenv
 import os
 import re
 
+from KG.settings import CHUNK_SIZE
 from rag.answer import clean_answer
 from rag.quota import daily_limiter
 
 load_dotenv()
+
+TOP_K = 6
+MAX_CONTEXT_CHARS = TOP_K * (CHUNK_SIZE + 100)
 
 
 def _validate_and_sanitize_question(question: str) -> str:
@@ -60,11 +64,11 @@ def query_vector_rag(
         vector_index_name, vector_node_label, vector_source_property, vector_embedding_property
     )
 
-    docs = vector_store.as_retriever(search_kwargs={"k": 6}).invoke(sanitized_question)
+    docs = vector_store.as_retriever(search_kwargs={"k": TOP_K}).invoke(sanitized_question)
 
     context = "\n\n".join(d.page_content for d in docs)
-    if len(context) > 16000:
-        context = context[:16000] + "\n[Context truncated to save token costs]"
+    if len(context) > MAX_CONTEXT_CHARS:
+        context = context[:MAX_CONTEXT_CHARS] + "\n[Context truncated to save token costs]"
 
     prompt = ChatPromptTemplate.from_messages([
         ("system",

@@ -63,8 +63,8 @@ def query_vector_rag(
     docs = vector_store.as_retriever(search_kwargs={"k": 6}).invoke(sanitized_question)
 
     context = "\n\n".join(d.page_content for d in docs)
-    if len(context) > 8000:
-        context = context[:8000] + "\n[Context truncated to save token costs]"
+    if len(context) > 16000:
+        context = context[:16000] + "\n[Context truncated to save token costs]"
 
     prompt = ChatPromptTemplate.from_messages([
         ("system",

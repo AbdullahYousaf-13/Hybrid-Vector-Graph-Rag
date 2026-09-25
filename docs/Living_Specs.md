@@ -257,7 +257,7 @@ question
   -> _validate_and_sanitize_question         # reject empty / >300 chars / strip \r\n\t
   -> Neo4jVector.from_existing_graph (Gemini query-embedding, 768d)
   -> retriever.invoke(question)               # top k=6 chunks by cosine (capped for cost)
-  -> stuff chunk text into <context>, truncate to 8000 chars
+  -> stuff chunk text into <context>, truncate to 16000 chars
   -> ChatPromptTemplate (<user_input> tag marks it untrusted) | gemini-3.1-flash-lite | StrOutputParser
   -> answer (model's text as-is, line breaks kept)
 

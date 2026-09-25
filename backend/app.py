@@ -49,13 +49,20 @@ def _read_quota() -> dict:
         return {"used": None, "max": daily_limiter.max_rpd}
 
 
-def _gemini_busy(error: BaseException) -> bool:
+_GEMINI_BUSY = {
+    "UNAVAILABLE": "Google's Gemini servers are overloaded right now (high demand for everyone, not your quota).",
+    "RESOURCE_EXHAUSTED": "Too many Gemini requests in the last minute for this API key.",
+}
+
+
+def _gemini_busy(error: BaseException) -> str | None:
     while error is not None:
         text = str(error)
-        if "UNAVAILABLE" in text or "RESOURCE_EXHAUSTED" in text:
-            return True
+        for status, message in _GEMINI_BUSY.items():
+            if status in text:
+                return message
         error = error.__cause__ or error.__context__
-    return False
+    return None
 
 
 @app.get("/api/health")
@@ -90,11 +97,9 @@ def query(request: QueryRequest):
         raise HTTPException(status_code=429, detail=str(e))
     except Exception as e:
         logging.getLogger("uvicorn.error").exception("Query failed (mode=%s)", request.mode)
-        if _gemini_busy(e):
-            raise HTTPException(
-                status_code=503,
-                detail="Gemini is overloaded or rate-limiting requests right now.",
-            )
+        busy = _gemini_busy(e)
+        if busy:
+            raise HTTPException(status_code=503, detail=busy)
         raise HTTPException(status_code=500, detail="Internal error while answering the question.")
 
 

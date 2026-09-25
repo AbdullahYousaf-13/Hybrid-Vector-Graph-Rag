@@ -330,8 +330,9 @@ question
   -> only one succeeded? -> return it directly, prefixed "(<other> unavailable — ...)"
   -> one side answered "I don't know"? -> return the other answer, no synthesis call
   -> both succeeded -> HYBRID_SYNTHESIS_TEMPLATE | gemini-3.1-flash-lite | StrOutputParser
-       -> synthesis fails? -> retry once after 3s (Gemini 503s are usually brief)
-       -> fails again? -> fall back to showing both answers under headings
+       -> synthesis fails (after the client's 3 attempts)? -> show both answers under headings
+  -> every Gemini call uses max_retries=3, which langchain_google_genai passes to google-genai as
+     HttpRetryOptions(attempts=3): up to 3 tries with ~1s/2s backoff on 429/5xx
   -> every answer passes through rag/answer.py clean_answer (drops "Based on the provided text," openers)
   -> answer (model's text as-is, line breaks kept)
 ```

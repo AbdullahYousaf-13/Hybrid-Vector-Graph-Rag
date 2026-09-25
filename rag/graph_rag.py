@@ -144,7 +144,7 @@ def generate_cypher_query(
     )
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash-lite", temperature=temperature, max_retries=1, timeout=30
+        model="gemini-3.1-flash-lite", temperature=temperature, max_retries=3, timeout=30
     )
 
     cypher_chain = GraphCypherQAChain.from_llm(

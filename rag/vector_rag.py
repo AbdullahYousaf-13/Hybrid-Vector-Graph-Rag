@@ -80,7 +80,7 @@ def query_vector_rag(
         model="gemini-3.1-flash-lite",
         temperature=0,
         google_api_key=os.getenv("GEMINI_API_KEY"),
-        max_retries=1,
+        max_retries=3,
         timeout=30,
     )
 

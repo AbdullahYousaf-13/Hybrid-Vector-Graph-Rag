@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
 import re
-import time
 
 from rag.answer import clean_answer
 from rag.quota import QuotaExceededError, daily_limiter
@@ -70,7 +69,7 @@ def _synthesize(question: str, vector_answer: str, graph_answer: str, domain_des
         model="gemini-3.1-flash-lite",
         temperature=0,
         google_api_key=os.getenv("GEMINI_API_KEY"),
-        max_retries=1,
+        max_retries=3,
         timeout=30,
     )
 
@@ -81,13 +80,7 @@ def _synthesize(question: str, vector_answer: str, graph_answer: str, domain_des
         "vector_answer": vector_answer,
         "graph_answer": graph_answer,
     }
-    try:
-        result = chain.invoke(inputs)
-    except Exception as e:
-        logger.warning("Hybrid: synthesis failed, retrying once", exc_info=e)
-        time.sleep(3)
-        result = chain.invoke(inputs)
-    return clean_answer(result)
+    return clean_answer(chain.invoke(inputs))
 
 
 _DECLINE = re.compile(r"^\W*i\s+(do\s+not|don't|don’t)\s+know", re.IGNORECASE)
